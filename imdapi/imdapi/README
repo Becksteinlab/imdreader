@@ -1,0 +1,24 @@
+IMD API example code
+--------------------
+  This is a simple example program that demonstrates how to write the
+simulation engine side of an interactive molecular dynamics system using
+the IMD interface in VMD.  In order to test it out, follow theses steps:
+  1) Compile the code with the "make" command, edit the compile line 
+     as needed. (some platforms don't need -lnsl or -lsocket...)
+
+  2) Once compiled, run the newly compiled "testimd" program
+
+  3) Start VMD, and load the "testimd.pdb" molecule, set the 
+     graphical representation to "VDW" so you can see the simulated
+     atom.
+
+  4) While the "testimd" binary is running, and the "testimd.pdb" is loaded
+     into VMD, type the following command into your VMD text console to 
+     cause VMD to connect to the test simulation:
+       imd connect localhost 54321
+
+  5) Go ahead and play around.
+
+  6) quit VMD, or type "imd detach" to disconnect from the test program.
+
+
