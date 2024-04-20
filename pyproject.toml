@@ -43,7 +43,7 @@ doc = [
 # documentation = "https://streamreader.readthedocs.io"
 
 [tool.setuptools]
-py-modules = []
+packages = ["streamreader"]
 
 [tool.pytest.ini_options]
 minversion = "6.0"

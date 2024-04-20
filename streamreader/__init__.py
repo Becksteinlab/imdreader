@@ -3,7 +3,10 @@ StreamReader
 Prototype streamreader
 """
 
-# Add imports here
+from .IMDProtocol import *
+from .STREAMREADER import *
 from importlib.metadata import version
+
+
 
 __version__ = version("streamreader")
