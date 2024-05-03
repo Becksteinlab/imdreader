@@ -145,6 +145,7 @@ class StreamReader(ReaderBase):
         return self._read_frame(self._frame + 1)
 
     def _read_frame(self, frame):
+        # NOTE: read everything provided, don't throw out forces
         self._frame = frame
         pos = self._buffer.get_frame()
         self.ts.positions = pos
@@ -198,7 +199,11 @@ class CircularNPBuf():
     """
     Thread-safe circular numpy buffer
     """
+    # NOTE: Use 1 buffer for pos, vel, force rather than 3
     def __init__(self, buffer_size, n_atoms):
+        # NOTE: use buffer as upper bound
+        # NOTE: verify >= 1 frame can fit in buffer
+        # Otherwise raise memory error
         self._buf = np.empty(buffer_size // 4, dtype=np.float32)
         self._mutex = threading.Lock()
         self._not_empty = threading.Condition(self._mutex)
@@ -220,6 +225,7 @@ class CircularNPBuf():
             # Write that requires wrapping
             if self._fill + self._frame_size - 1 >= len(self._buf):
                 n_first_write_elements = len(self._buf) - self._fill
+                #
                 self._buf[self._fill : len(self._buf)] = np.frombuffer(data_bytes[:n_first_write_elements * 4], dtype='>f4')
                 n_remaining_elements = self._frame_size - n_first_write_elements
                 self._fill = 0
@@ -236,6 +242,7 @@ class CircularNPBuf():
             self._not_empty.notify()
     
     def get_frame(self):
+        # NOTE: Init buffer in CircularNPBuf init()
         frame = np.empty(self._frame_size, dtype=np.float32)
         with self._not_empty:
             while not self._full:

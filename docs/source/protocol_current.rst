@@ -7,12 +7,6 @@ Headersize: 8 bytes
 Endianness: Little endian and big endian both allowed
 Only one client is allowed per GROMACS server at a time
 
-/*! \brief How long shall we wait in seconds until we check for a connection again? */
-constexpr int c_loopWait = 1;
-
-/*! \brief How long shall we check for the IMD_GO? */
-constexpr int c_connectWait = 1;
-
 Header types
 ------------
 
@@ -113,7 +107,7 @@ GROMACS (Server) 6: In every iteration of the md_do loop, first check for incomi
         <val> (Unused length attribute in header)
 
     Header:
-        8 (IMD_TRATE)s
+        8 (IMD_TRATE)
         <val> (New transfer rate. Value of 0 means reset to default)
 
     Any other header sent will disconnect the client and print an error message but not stop the simulation.
