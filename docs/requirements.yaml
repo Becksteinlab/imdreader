@@ -1,4 +1,4 @@
-name: streamreader-docs
+name: imdreader-docs
 channels:
 
   - conda-forge

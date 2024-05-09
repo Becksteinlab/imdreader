@@ -6,8 +6,8 @@ requires = [
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "streamreader"
-description = "Prototype streamreader"
+name = "imdreader"
+description = "Prototype imdreader"
 license = {file = "LICENSE" }
 authors = [
     {name = "Lawson", email = "ljwoods2@asu.edu"},
@@ -39,16 +39,16 @@ doc = [
 ]
 
 # [project.urls]
-# source = "https://github.com/ljwoods2/streamreader"
-# documentation = "https://streamreader.readthedocs.io"
+# source = "https://github.com/ljwoods2/imdreader"
+# documentation = "https://imdreader.readthedocs.io"
 
 [tool.setuptools]
-packages = ["streamreader"]
+packages = ["imdreader"]
 
 [tool.pytest.ini_options]
 minversion = "6.0"
 testpaths = [
-    "streamreader/tests",
+    "imdreader/tests",
 ]
 
 [tool.black]

@@ -1,7 +1,7 @@
 import socket
 import struct
-from streamreader import *
-from streamreader.IMDProtocol import *
+from imdreader import *
+from imdreader.IMDProtocol import *
 
 
 client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -15,9 +15,9 @@ go_signal = parse_header_bytes(response)
 print(go_signal.type)
 
 coordsheader = create_header_bytes(IMDType.IMD_FCOORDS, 12)
-coordsbody = struct.pack('!fff', 1.1, 2.3, 3.4)
+coordsbody = struct.pack("!fff", 1.1, 2.3, 3.4)
 client_socket.sendall(coordsheader + coordsbody)
-coordsbody = struct.pack('!fff', 1.2, 2.3, 3.4)
+coordsbody = struct.pack("!fff", 1.2, 2.3, 3.4)
 client_socket.sendall(coordsheader + coordsbody)
 
 client_socket.close()

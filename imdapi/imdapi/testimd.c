@@ -31,7 +31,7 @@ int main (int argc, char **argv) {
     if (vmdsock_selread(sock, 0) > 0) {
       clientsock = vmdsock_accept(sock);
       if (imd_handshake(clientsock)) {
-	clientsock = NULL;
+        clientsock = NULL;
       };
     }
   }

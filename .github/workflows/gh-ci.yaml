@@ -39,7 +39,7 @@ jobs:
           release: "latest"
 
   main-tests:
-    if: "github.repository == 'ljwoods2/streamreader'"
+    if: "github.repository == 'ljwoods2/imdreader'"
     needs: environment-config
     runs-on: ${{ matrix.os }}
     strategy:
@@ -72,7 +72,7 @@ jobs:
         use-mamba: true
         channels: conda-forge, defaults
 
-        activate-environment: streamreader-test
+        activate-environment: imdreader-test
         auto-update-conda: true
         auto-activate-base: false
         show-channel-urls: true
@@ -103,10 +103,10 @@ jobs:
 
     - name: Run tests
       run: |
-        pytest -n 2 -v --cov=streamreader --cov-report=xml --color=yes streamreader/tests/
+        pytest -n 2 -v --cov=imdreader --cov-report=xml --color=yes imdreader/tests/
 
     - name: codecov
-      if: github.repository == 'ljwoods2/streamreader' && github.event_name != 'schedule'
+      if: github.repository == 'ljwoods2/imdreader' && github.event_name != 'schedule'
       uses: codecov/codecov-action@v3
       with:
         file: coverage.xml
@@ -115,7 +115,7 @@ jobs:
 
 
   pylint_check:
-    if: "github.repository == 'ljwoods2/streamreader'"
+    if: "github.repository == 'ljwoods2/imdreader'"
     needs: environment-config
     runs-on: ubuntu-latest
 
@@ -137,11 +137,11 @@ jobs:
       env:
         PYLINTRC: .pylintrc
       run: |
-        pylint streamreader
+        pylint imdreader
 
 
   pypi_check:
-    if: "github.repository == 'ljwoods2/streamreader'"
+    if: "github.repository == 'ljwoods2/imdreader'"
     needs: environment-config
     runs-on: ubuntu-latest
 
@@ -163,7 +163,7 @@ jobs:
 
     - name: Check package build
       run: |
-        DISTRIBUTION=$(ls -t1 dist/streamreader-*.tar.gz | head -n 1)
-        test -n "${DISTRIBUTION}" || { echo "no distribution dist/streamreader-*.tar.gz found"; exit 1; }
+        DISTRIBUTION=$(ls -t1 dist/imdreader-*.tar.gz | head -n 1)
+        test -n "${DISTRIBUTION}" || { echo "no distribution dist/imdreader-*.tar.gz found"; exit 1; }
         echo "twine check $DISTRIBUTION"
         twine check $DISTRIBUTION

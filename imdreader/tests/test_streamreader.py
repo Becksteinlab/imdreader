@@ -1,16 +1,16 @@
 """
-Unit and regression test for the streamreader package.
+Unit and regression test for the imdreader package.
 """
 
 # Import package, test suite, and other packages as needed
-import streamreader
+import imdreader
 import pytest
 import sys
 
 
-def test_streamreader_imported():
+def test_imdreader_imported():
     """Sample test, will always pass so long as import statement worked"""
-    assert "streamreader" in sys.modules
+    assert "imdreader" in sys.modules
 
 
 def test_mdanalysis_logo_length(mdanalysis_logo_text):

@@ -9,7 +9,7 @@ Global pytest fixtures
 
 import pytest
 
-from streamreader.data.files import MDANALYSIS_LOGO
+from imdreader.data.files import MDANALYSIS_LOGO
 
 
 @pytest.fixture

@@ -1,15 +1,15 @@
 # How to contribute
 
-We welcome all contributions to StreamReader!
+We welcome all contributions to IMDReader!
 
 Contributions can take many forms, such as:
 
-* sharing bug reports or feature requests through the [Issue Tracker](https://github.com/ljwoods2/streamreader/issues)
+* sharing bug reports or feature requests through the [Issue Tracker](https://github.com/ljwoods2/imdreader/issues)
 * asking or answering questions, or otherwise joining in on discussions
 * adding bug fixes, new features, or otherwise improving the code
 * adding or improving documentation
 
-The second two options both involve making a [pull request](https://github.com/ljwoods2/streamreader/pulls) .
+The second two options both involve making a [pull request](https://github.com/ljwoods2/imdreader/pulls) .
 
 There are many existing guides on how to make a contribution to an open
 source project on GitHub. In short, the steps are to:

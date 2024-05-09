@@ -5,4 +5,5 @@ API Documentation
    :toctree: autosummary
    :recursive:
 
-   streamreader
+   imdreader
+   protocol_current

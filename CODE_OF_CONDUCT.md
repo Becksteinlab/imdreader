@@ -1,7 +1,7 @@
 # Code of conduct
 
-The StreamReader *Code of Conduct* sets the rules for the behavior of
-every member in the StreamReader community so that everyone can
+The IMDReader *Code of Conduct* sets the rules for the behavior of
+every member in the IMDReader community so that everyone can
 experience a welcoming, supportive, and productive environment that is
 free from harassment.
 
@@ -17,7 +17,7 @@ free from harassment.
 <!-- markdown-toc end -->
 ## Code of Conduct and Community Guidelines
 
-StreamReader is part of an engaged and respectful community made up of people from all
+IMDReader is part of an engaged and respectful community made up of people from all
 over the world. Your involvement helps us to further our mission and to create
 an open platform that serves a broad range of communities, from research and
 education to industry and beyond. This diversity is one of our biggest
@@ -37,7 +37,7 @@ quick, friendly but clear word on an online forum or in person can help resolve
 a misunderstanding and de-escalate things.
 
 By embracing the following principles, guidelines and actions to follow or
-avoid, you will help us make StreamReader a welcoming and productive community.
+avoid, you will help us make IMDReader a welcoming and productive community.
 
 1. **Be friendly and patient**.
 
@@ -81,9 +81,9 @@ avoid, you will help us make StreamReader a welcoming and productive community.
    discussion, avoiding features, etc. but often just unavailable.
 
 7. **When we disagree, try to understand why**. Disagreements, both social and
-   technical, happen all the time and StreamReader is no exception. It is important
+   technical, happen all the time and IMDReader is no exception. It is important
    that we resolve disagreements and differing views constructively. Remember
-   that we’re different. The strength of StreamReader comes from its varied community
+   that we’re different. The strength of IMDReader comes from its varied community
    that includes people from a wide range of backgrounds. Different people have
    different perspectives on issues. Being unable to understand why someone
    holds a viewpoint doesn’t mean they’re wrong. Don’t forget that it is human
@@ -128,7 +128,7 @@ the
 [*Jupyter*](https://github.com/jupyter/governance/blob/master/conduct/code_of_conduct.md),
 [*MolSSI*](https://github.com/MolSSI/cookiecutter-cms/blob/master/%7B%7Bcookiecutter.repo_name%7D%7D/CODE_OF_CONDUCT.md),
 and [*MDAnalysis*](https://github.com/MDAnalysis/mdanalysis/blob/develop/CODE_OF_CONDUCT.md) projects,
-modified by StreamReader.
+modified by IMDReader.
 We are grateful to those projects for contributing these
 materials under open licensing terms for us to easily reuse.
 

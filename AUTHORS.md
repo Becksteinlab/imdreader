@@ -1,10 +1,10 @@
 # Authors
 
-StreamReader was created by Lawson in 2024.
+IMDReader was created by Lawson in 2024.
 
 
 All contributing authors are listed in this file below.
-The repository history at https://github.com/ljwoods2/streamreader
+The repository history at https://github.com/ljwoods2/imdreader
 and the CHANGELOG show individual code contributions.
 
 ## Chronological list of authors
