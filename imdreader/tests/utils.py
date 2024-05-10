@@ -26,11 +26,7 @@ class DummyIMDServer:
 
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.socket.bind(("localhost", self.port))
-        # GROMACS waits for a connection for an unlimited time here
-        self.socket.listen(1)
-        self.conn, self.address = self.socket.accept()
 
-        self._send_handshake()
         self._simulation_loop()
 
     def _send_handshake(self):
@@ -46,15 +42,26 @@ class DummyIMDServer:
 
     def _simulation_loop(self):
         if self.imdwait and self.imdstep == -1:
-            self._await_go()
-        pass
+            self._handle_connect()
+
+        # First, read all incoming packets from the client
+        while self._peek_header():
+            command = self._expect_header()
+            if command.type == IMDType.IMD_KILL:
+                pass
+            if command.type == IMDType.IMD_DISCONNECT:
+                pass
+            if command.type == IMDType.IMD_MDCOMM:
+                pass
+            if command.type == IMDType.IMD_PAUSE:
+                pass
+            if command.type == IMDType.IMD_TRATE:
+                pass
+
+        # Then, send energy + position data
 
     def _await_go(self):
-        # must recieve go within 1 second of sending handshake
-        # if not, terminate connection
-        self.conn.settimeout(1)
-        header = self._expect_header(expected_type=IMDType.IMD_GO)
-        self.conn.settimeout(None)
+        self._expect_header(expected_type=IMDType.IMD_GO)
 
     def _expect_header(self, expected_type=None, expected_value=None):
         """
@@ -63,13 +70,24 @@ class DummyIMDServer:
         header = parse_header_bytes(self._recv_n_bytes(IMDHEADERSIZE))
         if expected_type is not None and header.type != expected_type:
             raise ValueError(
-                f"Expected packet type {expected_type}, got {header.type}"
+                f"DummyIMDServer: Expected packet type {expected_type}, got {header.type}"
             )
         elif expected_value is not None and header.length != expected_value:
             raise ValueError(
-                f"Expected packet length {expected_value}, got {header.length}"
+                f"DummyIMDServer: Expected packet length {expected_value}, got {header.length}"
             )
         return header
+
+    def _peek_header(self):
+        """
+        Peek at a header packet from the socket without consuming it
+        """
+
+        data = self.socket.recv(IMDHEADERSIZE, socket.MSG_PEEK)
+        if data:
+            header = parse_header_bytes(data)
+            return header
+        return None
 
     def _recv_n_bytes(self, num_bytes):
         """Receive an arbitrary number of bytes from the socket."""
@@ -83,3 +101,15 @@ class DummyIMDServer:
             view[total_received : total_received + len(chunk)] = chunk
             total_received += len(chunk)
         return data
+
+    def _handle_connect(self):
+        # GROMACS waits for a connection for an unlimited time here
+        self.socket.listen(1)
+        self.conn, self.address = self.socket.accept()
+
+        self._send_handshake()
+        # must recieve go within 1 second of sending handshake
+        # if not, terminate connection
+        self.conn.settimeout(1)
+        self._await_go()
+        self.conn.settimeout(None)
