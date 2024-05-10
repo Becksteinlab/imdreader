@@ -12,28 +12,56 @@ Header types
 
 NOTE: Divide these into client and server headers since they are mostly disjoint
 
+Shared headers
+^^^^^^^^^^^^^^
+
 .. list-table::
    :widths: 10 30 90
    :header-rows: 1
 
    * - Type
-     - Value
+     - Enum Integer Value
      - Description
    * - IMD_DISCONNECT
      - 0
      -
+   * - IMD_IOERROR
+     - 9
+     - 
+
+GROMACS Server-Only-Sent Headers
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+.. list-table::
+   :widths: 10 30 90
+   :header-rows: 1
+
+   * - Type
+     - Enum Integer Value
+     - Description
    * - IMD_ENERGIES
      - 1
      - 
    * - IMD_FCOORDS
      - 2
      - 
-   * - IMD_GO
-     - 3
-     - 
    * - IMD_HANDSHAKE
      - 4
      -
+
+Client-Only-Sent Headers
+^^^^^^^^^^^^^^^^^^^^^^^^
+
+.. list-table::
+   :widths: 10 30 90
+   :header-rows: 1
+
+   * - Type
+     - Enum Integer Value
+     - Description
+   * - IMD_GO
+     - 3
+     - 
    * - IMD_KILL
      - 5
      - 
@@ -50,10 +78,7 @@ NOTE: Divide these into client and server headers since they are mostly disjoint
      - 
    * - IMD_IOERROR
      - 9
-     - 
-   * - IMD_NR
-     - 10
-     - 
+     -
 
 
 Protocol steps
@@ -112,13 +137,18 @@ GROMACS (Server) 6: In every iteration of the md_do loop, first check for incomi
 
     Any other header sent will disconnect the client and print an error message but not stop the simulation.
 
-Next, send position data to the client IF this integration step lands in the rate step specified by the client (or the default, every step)
+Next, send energies and position data to the client IF this integration step lands in the rate step specified by the client (or the default, every step)
 
+    Header:
+        1 (IMD_ENERGIES)
+        1 (Contstant value)
     Header:
         2 (IMD_FCOORDS)
         <val> (Number of atoms in the system)
 
         Position packet:
+
+
 
 
 3. Disconnection

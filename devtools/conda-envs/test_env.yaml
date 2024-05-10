@@ -1,4 +1,4 @@
-name: streamreader-test
+name: reader-test
 channels:
   - conda-forge
   - defaults

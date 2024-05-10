@@ -1,11 +1,18 @@
-from MDAnalysis.coordinates.base import ReaderBase
+from MDAnalysis.coordinates.base import (
+    ReaderBase,
+    FrameIteratorIndices,
+    FrameIteratorAll,
+    FrameIteratorSliced,
+)
 from .IMDProtocol import *
 import socket
 import threading
 import numpy as np
+import numbers
 from MDAnalysis.lib.util import store_init_arguments
 
-class StreamReader(ReaderBase):
+
+class IMDReader(ReaderBase):
     """
     Reader for IMD protocol packets.
 
@@ -15,58 +22,77 @@ class StreamReader(ReaderBase):
     We are assuming the header will never be sent without the body as in the sample code.
     If this assumption is violated, the producer thread can cause a deadlock.
     """
-    format = "STREAM"
+
+    format = "IMD"
 
     @store_init_arguments
-    def __init__(self, filename,
-                 convert_units=True,
-                 forces=False,
-                 num_atoms=None,
-                 n_frames=None,
-                 buffer_size=2**23,
-                 **kwargs):
-        super(StreamReader, self).__init__(filename, **kwargs)
+    def __init__(
+        self,
+        filename,
+        convert_units=True,
+        num_atoms=None,
+        n_frames=None,
+        buffer_size=2**23,
+        **kwargs,
+    ):
+        super(IMDReader, self).__init__(filename, **kwargs)
         self._host, self._port = parse_host_port(filename)
         self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         # NOTE: Replace me with header packet which contains this information
         # OR get this information from the topology?
         if not n_frames:
-            raise  ValueError("n_frames must be specified")
+            raise ValueError("n_frames must be specified")
         self.n_frames = n_frames
         if not num_atoms:
-            raise  ValueError("num_atoms must be specified")
+            raise ValueError("num_atoms must be specified")
         self.n_atoms = num_atoms
         self.ts = self._Timestep(self.n_atoms, **self._ts_kwargs)
 
-        # NOTE: We need to know if we are getting forces or not to construct the correct buffers
-        self._buffer = CircularNPBuf(buffer_size, self.n_atoms)
         # The body of a force or position packet should contain
         # (4 bytes per float * 3 atoms * n_atoms) bytes
         self._expected_data_bytes = 12 * self.n_atoms
-        self._get_client_connection()
+        # Preallocate body byte holder
+        self._body_byte_buf = bytearray(self._expected_data_bytes)
+        self._body_byte_view = memoryview(self._body_byte_buf)
+        # < represents little endian and > represents big endian
+        # we assume big by default and use handshake to check
+        self._endianness = ">"
+        self._connect_to_server()
         self._await_IMD_handshake()
         self._start_producer_thread()
-        self._frame = -1        
-        
-    def _get_client_connection(self):
+
+        # NOTE: We need to know if we are getting forces or not to construct the correct buffers
+        self._buffer = CircularNPBuf(
+            buffer_size, self.n_atoms, self._endianness
+        )
+        self._frame = -1
+
+    def _connect_to_server(self):
         """
         Listen for a connection on the specified port.
         """
-        self._socket.bind((self._host, self._port))
-        self._socket.listen(1)
-        print("waiting for connection...")
-        self._conn, self._addr = self._socket.accept()
+        self._socket.connect((self._host, self._port))
+        self._conn = self._socket
 
     def _await_IMD_handshake(self):
         """
-        Wait for the client to send a handshake packet and
-        check IMD Protocol version from sender.
+        Wait for the server to send a handshake packet, set endianness,
+        and check IMD Protocol version.
         """
         print("waiting for handshake...")
         handshake = self._expect_header(IMDType.IMD_HANDSHAKE)
         if handshake.length != IMDVERSION:
-            self._pause_simulation()
-            raise ValueError(f"Incompatible IMD version. Expected {IMDVERSION}, got {handshake.length}")
+            # Try swapping endianness
+            swapped = struct.unpack("<i", struct.pack(">i", handshake.length))[
+                0
+            ]
+            if swapped != IMDVERSION:
+                err_version = min(swapped, handshake.length)
+                raise ValueError(
+                    f"Incompatible IMD version. Expected {IMDVERSION}, got {err_version}"
+                )
+            else:
+                self._endianness = "<"
         print("handshake received")
 
     def _pause_simulation(self):
@@ -74,17 +100,17 @@ class StreamReader(ReaderBase):
         Pause the simulation for buffer filling purposes
         or to exit gracefully.
         """
-        stp = create_header_bytes(IMDType.IMD_PAUSE, 0)
-        self._conn.sendall(stp)
-        
+        pause = create_header_bytes(IMDType.IMD_PAUSE, 0)
+        self._conn.sendall(pause)
+
     def _send_go_packet(self):
         """
         Send a go packet to the client to start the simulation
         and begin receiving data.
         """
         print("sending go packet...")
-        header = create_header_bytes(IMDType.IMD_GO, 0)
-        self._conn.sendall(header)
+        go = create_header_bytes(IMDType.IMD_GO, 0)
+        self._conn.sendall(go)
 
     def _start_producer_thread(self):
         """
@@ -104,13 +130,24 @@ class StreamReader(ReaderBase):
 
         while self._parsed_frames < self.n_frames:
             header = self._expect_header()
-            if header.type == IMDType.IMD_ENERGIES and header.length == IMDENERGYPACKETLENGTH:
+            if header.type == IMDType.IMD_ENERGIES and header.length == 1:
                 self._recv_energies()
-            elif header.type == IMDType.IMD_FCOORDS and header.length == self._expected_data_bytes:
-                self._recv_fcoords()
-                self._parsed_frames += 1
+                header2 = self._expect_header(IMDType.IMD_FCOORDS)
+                if header2.length == self.n_atoms:
+                    self._recv_fcoords()
+                    self._parsed_frames += 1
+                else:
+                    raise ValueError(
+                        f"Unexpected coordinate packet length of "
+                        + f"{header2.length} bytes, expected "
+                        + f"{self._expected_data_bytes} bytes"
+                    )
             else:
-                raise ValueError("Unexpected packet type {}".format(header.type))
+                raise ValueError(
+                    f"Unexpected packet type {header.type} "
+                    + f"of length {header.length}"
+                )
+        print(self._parsed_frames)
 
     def _expect_header(self, expected_type=None):
         """
@@ -118,10 +155,15 @@ class StreamReader(ReaderBase):
         """
         header = parse_header_bytes(self._recv_n_bytes(IMDHEADERSIZE))
         if expected_type is not None and header.type != expected_type:
-            raise ValueError("Expected packet type {}, got {}".format(expected_type, header.type))
+            raise ValueError(
+                "Expected packet type {}, got {}".format(
+                    expected_type, header.type
+                )
+            )
         return header
 
     def _recv_n_bytes(self, num_bytes):
+        """Receive an arbitrary number of bytes from the socket."""
         data = bytearray(num_bytes)
         view = memoryview(data)
         total_received = 0
@@ -129,12 +171,28 @@ class StreamReader(ReaderBase):
             chunk = self._conn.recv(num_bytes - total_received)
             if not chunk:
                 raise ConnectionError("Socket connection was closed")
-            view[total_received:total_received+len(chunk)] = chunk
+            view[total_received : total_received + len(chunk)] = chunk
+            total_received += len(chunk)
+        return data
+
+    def _recv_body_bytes(self):
+        """Efficiently receives the correct number of bytes
+        for position data
+        """
+        total_received = 0
+        num_bytes = self._expected_data_bytes
+        data = self._body_byte_buf
+        view = self._body_byte_view
+        while total_received < num_bytes:
+            chunk = self._conn.recv(num_bytes - total_received)
+            if not chunk:
+                raise ConnectionError("Socket connection was closed")
+            view[total_received : total_received + len(chunk)] = chunk
             total_received += len(chunk)
         return data
 
     def _recv_fcoords(self):
-        self._buffer.insert(self._recv_n_bytes(self._expected_data_bytes))
+        self._buffer.insert(self._recv_body_bytes())
 
     def _recv_energies(self):
         self._recv_n_bytes(IMDENERGYPACKETLENGTH)
@@ -167,99 +225,144 @@ class StreamReader(ReaderBase):
         except:
             return False
         return True
-    
+
     def close(self):
         """Gracefully shut down the reader."""
         self._socket.close()
-        print("StreamReader shut down gracefully.")
-    
+        print("IMDReader shut down gracefully.")
+
     # Incompatible methods
     def copy(self):
-        raise NotImplementedError("StreamReader does not support copying")
+        raise NotImplementedError("IMDReader does not support copying")
 
     def __getitem__(self, frame):
-        raise NotImplementedError("StreamReader does not support indexing")
+        """This method from ProtoReader must be overridden
+        to prevent slicing that doesn't make sense in a stream.
+
+        We want the user to only be able to call this once.
+
+        Original docstring
+        ##################
+
+        Return the Timestep corresponding to *frame*.
+
+        If `frame` is a integer then the corresponding frame is
+        returned. Negative numbers are counted from the end.
+
+        If frame is a :class:`slice` then an iterator is returned that
+        allows iteration over that part of the trajectory.
+
+        Note
+        ----
+        *frame* is a 0-based frame index.
+        """
+        if isinstance(frame, numbers.Integral):
+            frame = self._apply_limits(frame)
+            return self._read_frame_with_aux(frame)
+        elif isinstance(frame, (list, np.ndarray)):
+            if len(frame) != 0 and isinstance(frame[0], (bool, np.bool_)):
+                # Avoid having list of bools
+                frame = np.asarray(frame, dtype=bool)
+                # Convert bool array to int array
+                frame = np.arange(len(self))[frame]
+            return FrameIteratorIndices(self, frame)
+        elif isinstance(frame, slice):
+            start, stop, step = self.check_slice_indices(
+                frame.start, frame.stop, frame.step
+            )
+            if start == 0 and stop == len(self) and step == 1:
+                return FrameIteratorAll(self)
+            else:
+                return FrameIteratorSliced(self, frame)
+        else:
+            raise TypeError(
+                "Trajectories must be an indexed using an integer,"
+                " slice or list of indices"
+            )
+
 
 def parse_host_port(filename):
-        # Check if the format is correct
-        parts = filename.split(':')
-        if len(parts) == 2:
-            host = parts[0]  # Hostname part
-            try:
-                port = int(parts[1])  # Convert the port part to an integer
-                return (host, port)
-            except ValueError:
-                # Handle the case where the port is not a valid integer
-                raise ValueError("Port must be an integer")
-        else:
-            # Handle the case where the format does not match "host:port"
-            raise ValueError("Filename must be in the format 'host:port'")
-        
-class CircularNPBuf():
+    # Check if the format is correct
+    parts = filename.split(":")
+    if len(parts) == 2:
+        host = parts[0]  # Hostname part
+        try:
+            port = int(parts[1])  # Convert the port part to an integer
+            return (host, port)
+        except ValueError:
+            # Handle the case where the port is not a valid integer
+            raise ValueError("Port must be an integer")
+    else:
+        # Handle the case where the format does not match "host:port"
+        raise ValueError("Filename must be in the format 'host:port'")
+
+
+class CircularNPBuf:
     """
     Thread-safe circular numpy buffer
     """
+
     # NOTE: Use 1 buffer for pos, vel, force rather than 3
-    def __init__(self, buffer_size, n_atoms):
-        # NOTE: use buffer as upper bound
-        # NOTE: verify >= 1 frame can fit in buffer
-        # Otherwise raise memory error
-        self._buf = np.empty(buffer_size // 4, dtype=np.float32)
+    def __init__(self, buffer_size, n_atoms, endianness):
+        # a frame is the number of 32bit floats
+        # needed to hold postition data for n_atoms
+        self._frame_size = n_atoms * 3
+        self._shape = (n_atoms, 3)
+        self._n_atoms = n_atoms
+        self._end = endianness
+
+        if self._frame_size * 4 > buffer_size:
+            raise MemoryError(
+                f"Requested buffer size of {buffer_size} "
+                + f"doesn't meet memory requirement of {self._frame_size * 4} "
+                + f"(position data for {n_atoms})"
+            )
+
+        self._buf_frames = (buffer_size // 4) // self._frame_size
+        self._buf = np.empty(
+            self._buf_frames * self._frame_size, dtype=np.float32
+        )
+
         self._mutex = threading.Lock()
         self._not_empty = threading.Condition(self._mutex)
         self._not_full = threading.Condition(self._mutex)
-        self._frame_size = (n_atoms * 3)
+
         # _empty refers to the number of empty
         # "frames" in the buffer
         # where a frame refers to space in a numpy array
-        # for a full frame of positions or data
-        self._empty = len(self._buf) // self._frame_size
+        # for a full ts frame of positions
+        self._empty = self._buf_frames
         self._full = 0
         self._fill = 0
         self._use = 0
+
+        self._curr_frame = np.empty(self._shape, dtype=np.float32)
 
     def insert(self, data_bytes):
         with self._not_full:
             while not self._empty:
                 self._not_full.wait()
-            # Write that requires wrapping
-            if self._fill + self._frame_size - 1 >= len(self._buf):
-                n_first_write_elements = len(self._buf) - self._fill
-                #
-                self._buf[self._fill : len(self._buf)] = np.frombuffer(data_bytes[:n_first_write_elements * 4], dtype='>f4')
-                n_remaining_elements = self._frame_size - n_first_write_elements
-                self._fill = 0
-                self._buf[self._fill : self._fill + n_remaining_elements] = np.frombuffer(data_bytes[n_first_write_elements * 4:
-                                                                                       (n_first_write_elements + 
-                                                                                        n_remaining_elements) * 4],
-                                                                                        dtype='>f4')
-                self._fill += n_remaining_elements
-            else:
-                self._buf[self._fill : self._fill + self._frame_size] = np.frombuffer(data_bytes, dtype='>f4')
-                self._fill += self._frame_size
+
+            self._buf[self._fill : self._fill + self._frame_size] = (
+                np.frombuffer(data_bytes, dtype=f"{self._end}f4").copy()
+            )
+            self._fill = (self._fill + self._frame_size) % len(self._buf)
+
             self._full += 1
             self._empty -= 1
             self._not_empty.notify()
-    
+
     def get_frame(self):
         # NOTE: Init buffer in CircularNPBuf init()
-        frame = np.empty(self._frame_size, dtype=np.float32)
         with self._not_empty:
             while not self._full:
                 self._not_empty.wait()
-            # Read that requires wrapping
-            if self._use + self._frame_size - 1 >= len(self._buf):
-                n_first_read_elements = len(self._buf) - self._use
-                frame[0 : len(self._buf)] = self._buf[self._use : len(self._buf)]
-                n_remaining_elements = self._frame_size - n_first_read_elements
-                self._use = 0
-                frame[n_first_read_elements : n_first_read_elements
-                       + n_remaining_elements] = self._buf[self._use : self._use + n_remaining_elements]
-                self._use += n_remaining_elements
-            else:
-                frame[:] = self._buf[self._use : self._use + self._frame_size]
-                self._use += self._frame_size
+            self._curr_frame[:] = self._buf[
+                self._use : self._use + self._frame_size
+            ].reshape(self._shape)
+            self._use = (self._use + self._n_atoms) % len(self._buf)
+
             self._full -= 1
             self._empty += 1
             self._not_full.notify()
-            return frame
+            return self._curr_frame

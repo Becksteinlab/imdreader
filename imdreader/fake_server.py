@@ -1,15 +1,15 @@
 import imdreader
 import MDAnalysis as mda
 from MDAnalysisTests.datafiles import PSF
+import os
 
 
-connection = "localhost:8000"
 u = mda.Universe(
-    "imdapi/imdapi/testimd.pdb",
-    connection,
-    format="STREAM",
-    n_frames=2,
-    num_atoms=1,
+    "selected_atoms.pdb",
+    "localhost:8888",
+    n_frames=100,
+    num_atoms=1789,
+    format="IMD",
 )
 for ts in u.trajectory:
     print(ts.positions)
