@@ -14,7 +14,6 @@ struct IMDheader{
 
 In a HANDSHAKE header packet, the length attribute is used to store the version 
 of the IMD protocol
-
 """
 IMDHEADERSIZE = 8
 IMDENERGYPACKETLENGTH = 40
@@ -35,9 +34,7 @@ class IMDType(Enum):
 
 
 class IMDHeader:
-    """
-    Convenience class to represent the header of an IMD packet
-    """
+    """Convenience class to represent the header of an IMD packet"""
 
     def __init__(self, msg_type: IMDType, length: int):
         self.type = msg_type

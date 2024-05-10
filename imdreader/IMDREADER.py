@@ -48,6 +48,12 @@ class IMDReader(ReaderBase):
         self.n_atoms = num_atoms
         self.ts = self._Timestep(self.n_atoms, **self._ts_kwargs)
 
+        self.units = {
+            "time": "ps",
+            "length": "nm",
+            "force": "kJ/(mol*nm)",
+        }
+
         # The body of a force or position packet should contain
         # (4 bytes per float * 3 atoms * n_atoms) bytes
         self._expected_data_bytes = 12 * self.n_atoms
@@ -80,7 +86,7 @@ class IMDReader(ReaderBase):
         and check IMD Protocol version.
         """
         print("waiting for handshake...")
-        handshake = self._expect_header(IMDType.IMD_HANDSHAKE)
+        handshake = self._expect_header(expected_type=IMDType.IMD_HANDSHAKE)
         if handshake.length != IMDVERSION:
             # Try swapping endianness
             swapped = struct.unpack("<i", struct.pack(">i", handshake.length))[
@@ -111,6 +117,13 @@ class IMDReader(ReaderBase):
         print("sending go packet...")
         go = create_header_bytes(IMDType.IMD_GO, 0)
         self._conn.sendall(go)
+        # a test
+        dis = create_header_bytes(IMDType.IMD_DISCONNECT, 0)
+        self._conn.sendall(dis)
+
+        self._conn.connect((self._host, self._port))
+        go = create_header_bytes(IMDType.IMD_GO, 0)
+        self._conn.sendall(go)
 
     def _start_producer_thread(self):
         """
@@ -129,36 +142,29 @@ class IMDReader(ReaderBase):
         self._parsed_frames = 0
 
         while self._parsed_frames < self.n_frames:
-            header = self._expect_header()
-            if header.type == IMDType.IMD_ENERGIES and header.length == 1:
-                self._recv_energies()
-                header2 = self._expect_header(IMDType.IMD_FCOORDS)
-                if header2.length == self.n_atoms:
-                    self._recv_fcoords()
-                    self._parsed_frames += 1
-                else:
-                    raise ValueError(
-                        f"Unexpected coordinate packet length of "
-                        + f"{header2.length} bytes, expected "
-                        + f"{self._expected_data_bytes} bytes"
-                    )
-            else:
-                raise ValueError(
-                    f"Unexpected packet type {header.type} "
-                    + f"of length {header.length}"
-                )
+            header1 = self._expect_header(
+                expected_type=IMDType.IMD_ENERGIES, expected_value=1
+            )
+            self._recv_energies()
+            header2 = self._expect_header(
+                IMDType.IMD_FCOORDS, expected_value=self.n_atoms
+            )
+            self._recv_fcoords()
+            self._parsed_frames += 1
         print(self._parsed_frames)
 
-    def _expect_header(self, expected_type=None):
+    def _expect_header(self, expected_type=None, expected_value=None):
         """
         Read a header packet from the socket.
         """
         header = parse_header_bytes(self._recv_n_bytes(IMDHEADERSIZE))
         if expected_type is not None and header.type != expected_type:
             raise ValueError(
-                "Expected packet type {}, got {}".format(
-                    expected_type, header.type
-                )
+                f"Expected packet type {expected_type}, got {header.type}"
+            )
+        elif expected_value is not None and header.length != expected_value:
+            raise ValueError(
+                f"Expected packet length {expected_value}, got {header.length}"
             )
         return header
 

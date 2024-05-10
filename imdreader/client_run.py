@@ -5,7 +5,7 @@ import os
 
 
 u = mda.Universe(
-    "selected_atoms.pdb",
+    "example/imdexample/selected_atoms.pdb",
     "localhost:8888",
     n_frames=100,
     num_atoms=1789,
