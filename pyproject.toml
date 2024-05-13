@@ -45,6 +45,10 @@ doc = [
 [tool.setuptools]
 packages = ["imdreader"]
 
+# Installs tests datafiles
+[tool.setuptools.package-data]
+"imdreader" = ["data/*"]
+
 [tool.pytest.ini_options]
 minversion = "6.0"
 testpaths = [

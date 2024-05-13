@@ -4,9 +4,10 @@ import MDAnalysis as mda
 from MDAnalysis.coordinates.memory import MemoryReader
 import numpy as np
 import socket
+import threading
 
 
-class DummyIMDServer:
+class DummyIMDServer(threading.Thread):
     def __init__(
         self,
         imdwait=True,
@@ -15,18 +16,27 @@ class DummyIMDServer:
         port=8888,
         endianness="<",
         version=2,
+        frames=None,
     ):
         self.port = port
-        self.imdstep = -1
+
         self.imdwait = imdwait
         self.imdpull = imdpull
         self.imdterm = imdterm
         self.endian = endianness
         self.version = version
 
+        self.step = 0
+        self.imdstep = -1
+
+        self.energy = np.arange(9, dtype=np.float32)
+        self.positions = np.array(
+            [[0, 0, 0], [1, 1, 1], [2, 2, 2]], dtype=np.float32
+        )
+
+    def run(self):
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.socket.bind(("localhost", self.port))
-
         self._simulation_loop()
 
     def _send_handshake(self):

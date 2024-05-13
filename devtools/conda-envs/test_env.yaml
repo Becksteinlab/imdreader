@@ -20,6 +20,9 @@ dependencies:
   - codecov
   - MDAnalysisTests>=2.7.0
 
+  # gromacs
+  - gromacs==2023.4
+
   # Pip-only installs
   #- pip:
   #  - codecov

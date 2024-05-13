@@ -17,7 +17,7 @@ integrator               = md
 ; Start time and timestep in ps
 tinit                    = 0
 dt                       = 0.002
-nsteps                   = 25
+nsteps                   = 10
 ; For exact run continuation or redoing part of a run
 init-step                = 0
 ; Part index is updated automatically on checkpointing (keeps files separate)
@@ -51,15 +51,15 @@ rtpi                     = 0.05
 
 ; OUTPUT CONTROL OPTIONS
 ; Output frequency for coords (x), velocities (v) and forces (f)
-nstxout                  = 0
+nstxout                  = 1
 nstvout                  = 0
 nstfout                  = 0
 ; Output frequency for energies to log file and energy file
-nstlog                   = 500
-nstcalcenergy            = 100
-nstenergy                = 500
+nstlog                   = 10
+nstcalcenergy            = 10
+nstenergy                = 10
 ; Output frequency and precision for .xtc file
-nstxout-compressed       = 500
+nstxout-compressed       = 0
 compressed-x-precision   = 1000
 ; This selects the subset of atoms for the compressed
 ; trajectory file. You can select multiple groups. By
@@ -257,7 +257,7 @@ pull                     = no
 rotation                 = no
 
 ; Group to display and/or manipulate in interactive MD session
-IMD-group                = non-Water
+IMD-group                = System
 
 ; NMR refinement stuff 
 ; Distance restraints type: No, Simple or Ensemble
