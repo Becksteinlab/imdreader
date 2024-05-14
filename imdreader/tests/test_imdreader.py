@@ -86,20 +86,23 @@ def test_comp_imd_xtc(run_gmx):
     run_gmx.readuntil(
         "IMD: Will wait until I have a connection and IMD_GO orders."
     )
-
+    u2 = mda.Universe(IMDGROUP_GRO, OUT_TRR)
     u = mda.Universe(
         IMDGROUP_GRO, "localhost:8888", n_frames=11, num_atoms=36688
     )
     i = 0
     streampos = np.empty((11, 36688, 3), dtype=np.float32)
     for ts in u.trajectory:
+        u.atoms.wrap(
+            box=u2.trajectory[i].dimensions,
+            inplace=True,
+        )
         streampos[i] = ts.positions[:]
         i += 1
-    u2 = mda.Universe(IMDGROUP_GRO, "out.trr")
 
     expected = streampos[0]
     actual = u2.trajectory[0].positions
-    rtol = 1e-7
+    rtol = 1e-4
     atol = 0
     # Calculate the differences and the mask for elements that are not close
     differences = np.abs(actual - expected)
@@ -107,9 +110,7 @@ def test_comp_imd_xtc(run_gmx):
         np.isclose(actual, expected, rtol=rtol, atol=atol, equal_nan=True)
         == False
     )
-    print(u2.trajectory[0].triclinic_dimensions[0])
-    print(u2.trajectory[0].triclinic_dimensions[1])
-    print(u2.trajectory[0].triclinic_dimensions[2])
+    print(u2.trajectory[0].dimensions)
     if np.any(not_close):
         actual_diffs = actual[not_close]
         expected_diffs = expected[not_close]

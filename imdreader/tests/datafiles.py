@@ -15,6 +15,7 @@ __all__ = [
     "TOPOL_TOP",
     "TOPOL_TPR",
     "IMDGROUP_GRO",
+    "OUT_TRR",
 ]
 
 from importlib import resources
@@ -28,5 +29,6 @@ MDOUT_MDP = (_data_ref / "md.mdp").as_posix()
 TOPOL_TOP = (_data_ref / "topol.top").as_posix()
 TOPOL_TPR = (_data_ref / "topol.tpr").as_posix()
 IMDGROUP_GRO = (_data_ref / "imdgroup.gro").as_posix()
+OUT_TRR = (_data_ref / "out.trr").as_posix()
 
 del resources
