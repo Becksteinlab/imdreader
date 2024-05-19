@@ -9,10 +9,10 @@ Use as ::
 """
 
 __all__ = [
-    "NPT_GRO",
+    "ARGON_GRO",
     "MD_MDP",
     "MDOUT_MDP",
-    "TOPOL_TOP",
+    "ARGON_TOP",
     "TOPOL_TPR",
     "IMDGROUP_GRO",
     "OUT_TRR",
@@ -23,12 +23,12 @@ from pathlib import Path
 
 _data_ref = resources.files("imdreader.data")
 
-NPT_GRO = (_data_ref / "npt.gro").as_posix()
+ARGON_GRO = (_data_ref / "argon_0.1ns.gro").as_posix()
 MD_MDP = (_data_ref / "md.mdp").as_posix()
-MDOUT_MDP = (_data_ref / "md.mdp").as_posix()
-TOPOL_TOP = (_data_ref / "topol.top").as_posix()
+MDOUT_MDP = (_data_ref / "mdout.mdp").as_posix()
+ARGON_TOP = (_data_ref / "argon.top").as_posix()
 TOPOL_TPR = (_data_ref / "topol.tpr").as_posix()
 IMDGROUP_GRO = (_data_ref / "imdgroup.gro").as_posix()
-OUT_TRR = (_data_ref / "out.trr").as_posix()
+OUT_TRR = (_data_ref / "traj.trr").as_posix()
 
 del resources

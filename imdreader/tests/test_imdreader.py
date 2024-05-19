@@ -15,13 +15,17 @@ from MDAnalysisTests.coordinates.base import assert_timestep_almost_equal
 
 import sys
 import threading
+import logging
 from pwn import *
 
 """
 mdout generated using 
-gmx grompp -f md.mdp -c npt.gro -maxwarn 3
+gmx grompp -f md.mdp -c argon_start.pdb -p argon.top
+
+gmx mdrun -s topol.tpr -c argon_0.1ns.gro
 
 """
+
 """
 "-imdwait", "-imdpull", "-imdterm"
 """
@@ -45,8 +49,6 @@ def run_gmx(tmpdir):
         "mdrun",
         "-s",
         TOPOL_TPR,
-        "-o",
-        "out.trr",
         "-imdwait",
         "-imdpull",
         "-imdterm",
@@ -55,7 +57,6 @@ def run_gmx(tmpdir):
         p = process(
             command,
         )
-
         try:
             # Yield the process to the test function; control resumes here after test ends
             yield p
@@ -71,25 +72,13 @@ def run_gmx(tmpdir):
                 p.wait()  # Wait again to ensure it's cleaned up
 
 
-@pytest.fixture(scope="function")
-def server_thread():
-    server = DummyIMDServer()
-    thread = threading.Thread(target=server.run)
-    thread.start()
-    yield
-    server.disconnect()  # Ensure proper shutdown
-    thread.join()
-
-
 def test_comp_imd_xtc(run_gmx):
     # stdout, stderr = run_gmx.communicate()
     run_gmx.readuntil(
         "IMD: Will wait until I have a connection and IMD_GO orders."
     )
     u2 = mda.Universe(IMDGROUP_GRO, OUT_TRR)
-    u = mda.Universe(
-        IMDGROUP_GRO, "localhost:8888", n_frames=11, num_atoms=36688
-    )
+    u = mda.Universe(IMDGROUP_GRO, "localhost:8888", num_atoms=36688)
     i = 0
     streampos = np.empty((11, 36688, 3), dtype=np.float32)
     for ts in u.trajectory:
@@ -129,18 +118,36 @@ def test_comp_imd_xtc(run_gmx):
     assert 1 == 1
 
 
-def test_buffer_mgmt(run_gmx):
+def test_traj_len(run_gmx):
+    run_gmx.readuntil(
+        "IMD: Will wait until I have a connection and IMD_GO orders."
+    )
+    u2 = mda.Universe(IMDGROUP_GRO, OUT_TRR)
+    u = mda.Universe(
+        IMDGROUP_GRO,
+        "localhost:8888",
+        num_atoms=100,
+    )
+    for ts in u.trajectory:
+        # Wait to simulate analysis
+        sleep(0.1)
+
+    assert len(u2.trajectory) == len(u.trajectory)
+
+
+def test_pause(run_gmx):
+    # Provide a buffer small enough to force pausing the simulation
     run_gmx.readuntil(
         "IMD: Will wait until I have a connection and IMD_GO orders."
     )
     u = mda.Universe(
         IMDGROUP_GRO,
         "localhost:8888",
-        n_frames=11,
-        num_atoms=36688,
-        # 4 frames, each 440296 bytes
-        buffer_size=3522368,
+        num_atoms=100,
+        # 1240 bytes per frame
+        buffer_size=12400,
     )
     for ts in u.trajectory:
         sleep(0.1)
-    assert 1 == 1
+
+    assert len(u.trajectory) == 100
