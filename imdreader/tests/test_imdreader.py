@@ -22,7 +22,7 @@ from pwn import *
 mdout generated using 
 gmx grompp -f md.mdp -c argon_start.pdb -p argon.top
 
-gmx mdrun -s topol.tpr -c argon_0.1ns.gro
+gmx mdrun -s topol.tpr
 
 """
 
@@ -136,6 +136,8 @@ def test_traj_len(run_gmx):
 
 
 def test_pause(run_gmx):
+
+    # assert this in output: Un-pause command received.
     # Provide a buffer small enough to force pausing the simulation
     run_gmx.readuntil(
         "IMD: Will wait until I have a connection and IMD_GO orders."
@@ -151,3 +153,22 @@ def test_pause(run_gmx):
         sleep(0.1)
 
     assert len(u.trajectory) == 100
+
+
+"""
+import socket
+import struct
+
+conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+def connect():
+    conn.connect(("localhost",8888))
+    conn.recv(8)
+    go = struct.pack("!ii", 3, 0)
+    conn.sendall(go)
+
+def pause():
+    pause = struct.pack("!ii", 7, 0)
+    conn.sendall(pause)
+
+"""

@@ -70,19 +70,16 @@ class IMDReader(ReaderBase):
         return self._read_frame(self._frame + 1)
 
     def _read_frame(self, frame):
-        # When we've read all frames,
-        # we wait for the producer to finish
-        # _full is safe to access here since producer can no longer change it
-        if self._buffer.producer_finished and self._buffer._full == 0:
-            self._producer.join()
-            raise IOError from None
-
-        self._frame = frame
 
         # loads the timestep with step, positions, and energy
         self._buffer.consume_next_timestep()
         self.ts.frame = self._frame
         self.ts.dimensions = None
+
+        # Must set frame after read occurs successfully
+        # Since buffer raises IO error
+        # after producer is finished and there are no more frames
+        self._frame = frame
 
         return self.ts
 
@@ -103,8 +100,9 @@ class IMDReader(ReaderBase):
         return True
 
     def close(self):
-        """Gracefully shut down the reader."""
+        """Gracefully shut down the reader. Stops the producer thread."""
         self._producer.stop()
+        self._producer.join()
         print("IMDReader shut down gracefully.")
 
     # Incompatible methods
@@ -135,7 +133,7 @@ class IMDProducer(threading.Thread):
         socket_bufsize=None,
         pausable=True,
     ):
-        super(IMDProducer, self).__init__(daemon=True)
+        super(IMDProducer, self).__init__()
         self._host, self._port = parse_host_port(filename)
         self._conn = None
         self.running = False
@@ -157,8 +155,6 @@ class IMDProducer(threading.Thread):
         self._body_byte_buf = bytearray(self._expected_data_bytes)
         self._body_byte_view = memoryview(self._body_byte_buf)
 
-        signal.signal(signal.SIGINT, self._handle_signal)
-        signal.signal(signal.SIGTERM, self._handle_signal)
         self._is_disconnected = False
 
         # The body of a force or position packet should contain
@@ -264,8 +260,13 @@ class IMDProducer(threading.Thread):
             # Reset timeout if it was changed during the loop
             self._conn.settimeout(None)
 
-        self._ensure_disconnect()
         return
+
+    def stop(self):
+        # MUST disconnect before stopping run loop
+        self._buffer.producer_finished = True
+        self._ensure_disconnect()
+        self.running = False
 
     def _check_end_of_simulation(self):
         # It is the server's reponsibility
@@ -294,11 +295,8 @@ class IMDProducer(threading.Thread):
                 "IMDProducer: Assuming simulation is over at frame "
                 + f"#{self.parsed_frames - 1} due to read timeout"
             )
-
-    def stop(self):
-        """Method to stop the thread and disconnect safely."""
-        self.running = False
-        self._ensure_disconnect()
+            self.running = False
+            self._buffer.producer_finished = True
 
     def _handle_signal(self, signum, frame):
         """Handle SIGINT and SIGTERM signals."""
@@ -307,18 +305,26 @@ class IMDProducer(threading.Thread):
 
     def _ensure_disconnect(self):
         """Ensure the connection is closed only once."""
-        if not self._is_disconnected:
+        # We rely on the server to close the connection
+        # so only disconnect in cases where it isn't the
+        # server's responsibility (stopping mid-simulation)
+        if not self._is_disconnected and self.running:
             self._disconnect()
             self._is_disconnected = True
 
     def _recv_n_bytes(self, num_bytes):
-        """Receive an arbitrary number of bytes from the socket."""
+        """Receive an arbitrary number of bytes from the socket.
+        Used to receive headers"""
         data = bytearray(num_bytes)
         view = memoryview(data)
         total_received = 0
         while total_received < num_bytes:
             chunk = self._conn.recv(num_bytes - total_received)
             if not chunk:
+                self.stop()
+                logger.warning(
+                    f"IMDProducer: Data likely lost in frame {self.parsed_frames}"
+                )
                 raise ConnectionError("Socket connection was closed")
             view[total_received : total_received + len(chunk)] = chunk
             total_received += len(chunk)
@@ -335,6 +341,10 @@ class IMDProducer(threading.Thread):
         while total_received < num_bytes:
             chunk = self._conn.recv(num_bytes - total_received)
             if not chunk:
+                self.stop()
+                logger.warning(
+                    f"IMDProducer: Data likely lost in frame {self.parsed_frames}"
+                )
                 raise ConnectionError("Socket connection was closed")
             view[total_received : total_received + len(chunk)] = chunk
             total_received += len(chunk)
@@ -351,6 +361,10 @@ class IMDProducer(threading.Thread):
         while total_received < num_bytes:
             chunk = self._conn.recv(num_bytes - total_received)
             if not chunk:
+                self.stop()
+                logger.warning(
+                    f"IMDProducer: Data likely lost in frame {self.parsed_frames}"
+                )
                 raise ConnectionError("Socket connection was closed")
             view[total_received : total_received + len(chunk)] = chunk
             total_received += len(chunk)
@@ -362,10 +376,12 @@ class IMDProducer(threading.Thread):
         """
         header = parse_header_bytes(self._recv_n_bytes(IMDHEADERSIZE))
         if expected_type is not None and header.type != expected_type:
+            self.stop()
             raise ValueError(
                 f"Expected packet type {expected_type}, got {header.type}"
             )
         elif expected_value is not None and header.length != expected_value:
+            self.stop()
             raise ValueError(
                 f"Expected packet length {expected_value}, got {header.length}"
             )
@@ -373,21 +389,13 @@ class IMDProducer(threading.Thread):
 
     def _disconnect(self):
         if self._conn:
-            if not self._is_socket_connected():
-                try:
-                    disconnect = create_header_bytes(IMDType.IMD_DISCONNECT, 0)
-                    self._conn.sendall(disconnect)
-                    self._conn.close()
-                    logger.debug("IMDProducer: Disconnected from server")
-                except Exception as e:
-                    print(f"IMDProducer: Error during disconnect: {e}")
-
-    def _is_socket_connected(self):
-        try:
-            self._conn.getpeername()
-            return True
-        except socket.error:
-            return False
+            try:
+                disconnect = create_header_bytes(IMDType.IMD_DISCONNECT, 0)
+                self._conn.sendall(disconnect)
+                self._conn.close()
+                logger.debug("IMDProducer: Disconnected from server")
+            except Exception as e:
+                print(f"IMDProducer: Error during disconnect: {e}")
 
 
 class CircularByteBuf:
@@ -419,7 +427,6 @@ class CircularByteBuf:
         self._mutex = threading.Lock()
         self._not_empty = threading.Condition(self._mutex)
         self._not_full = threading.Condition(self._mutex)
-        self._has_space = threading.Condition()
 
         # _empty refers to the number of empty
         # "frames" in the buffer
@@ -487,8 +494,14 @@ class CircularByteBuf:
         self._start = not self._start
 
         with self._not_empty:
-            while not self._full:
+            while not self._full and not self.producer_finished:
+                if self._frame == 100:
+                    logger.debug("testing")
                 self._not_empty.wait()
+
+            # Buffer is responsible for stopping interation
+            if self.producer_finished and not self._full:
+                raise IOError from None
 
             self._ts_buf[:] = self._memview[
                 self._use : self._use + self._frame_size
