@@ -4,9 +4,7 @@ import logging
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 if not logger.hasHandlers():
-    file_handler = logging.FileHandler(
-        "/nfs/homes3/ljwoods2/workspace/imdreader/test.log"
-    )
+    file_handler = logging.FileHandler("test.log")
     file_handler.setLevel(logging.DEBUG)
     formatter = logging.Formatter(
         "%(asctime)s - %(name)s - %(levelname)s - %(message)s"

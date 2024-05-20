@@ -39,7 +39,7 @@ jobs:
           release: "latest"
 
   main-tests:
-    if: "github.repository == 'ljwoods2/imdreader'"
+    if: "github.repository == 'becksteinlab/imdreader'"
     needs: environment-config
     runs-on: ${{ matrix.os }}
     strategy:
@@ -106,7 +106,7 @@ jobs:
         pytest -n 2 -v --cov=imdreader --cov-report=xml --color=yes imdreader/tests/
 
     - name: codecov
-      if: github.repository == 'ljwoods2/imdreader' && github.event_name != 'schedule'
+      if: github.repository == 'becksteinlab/imdreader' && github.event_name != 'schedule'
       uses: codecov/codecov-action@v3
       with:
         file: coverage.xml
@@ -115,7 +115,7 @@ jobs:
 
 
   pylint_check:
-    if: "github.repository == 'ljwoods2/imdreader'"
+    if: "github.repository == 'becksteinlab/imdreader'"
     needs: environment-config
     runs-on: ubuntu-latest
 
@@ -141,7 +141,7 @@ jobs:
 
 
   pypi_check:
-    if: "github.repository == 'ljwoods2/imdreader'"
+    if: "github.repository == 'becksteinlab/imdreader'"
     needs: environment-config
     runs-on: ubuntu-latest
 

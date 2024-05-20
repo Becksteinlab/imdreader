@@ -5,5 +5,5 @@ API Documentation
    :toctree: autosummary
    :recursive:
 
-   imdreader
-   protocol_current
+   imdreader.IMDREADER
+   imdreader.IMDProtocol

@@ -39,7 +39,7 @@ doc = [
 ]
 
 # [project.urls]
-# source = "https://github.com/ljwoods2/imdreader"
+# source = "https://github.com/becksteinlab/imdreader"
 # documentation = "https://imdreader.readthedocs.io"
 
 [tool.setuptools]

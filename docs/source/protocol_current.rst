@@ -42,7 +42,7 @@ Client->GROMACS Headers
    * - Type
      - Enum Integer Value
      - Description
-  *  - IMD_DISCONNECT
+   * - IMD_DISCONNECT
      - 0
      - Tells the GROMACS server to disconnect its client socket and reset its IMD step to its default
    * - IMD_GO
