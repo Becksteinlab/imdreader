@@ -68,14 +68,13 @@ jobs:
         add-pip-as-python-dependency: true
         architecture: x64
 
-        miniforge-variant: Mambaforge
-        use-mamba: true
         channels: conda-forge, defaults
 
         activate-environment: imdreader-test
         auto-update-conda: true
         auto-activate-base: false
         show-channel-urls: true
+        miniconda-version: latest
 
 
     - name: Install MDAnalysis version
@@ -83,8 +82,8 @@ jobs:
       with:
         version: ${{ matrix.mdanalysis-version }}
         install-tests: false
-        installer:  mamba 
-        shell: bash  -l {0} 
+        installer: conda
+        shell: bash -l {0} 
       
     - name: Install package
       run: |
@@ -96,14 +95,13 @@ jobs:
         which python
         which pip
         pip list
-
         conda info
         conda list
 
 
     - name: Run tests
       run: |
-        pytest -n 2 -v --cov=imdreader --cov-report=xml --color=yes imdreader/tests/
+        pytest -v --cov=imdreader --cov-report=xml --color=yes imdreader/tests/
 
     - name: codecov
       if: github.repository == 'becksteinlab/imdreader' && github.event_name != 'schedule'

@@ -489,7 +489,7 @@ class IMDProducer(threading.Thread):
                 self._conn.close()
                 logger.debug("IMDProducer: Disconnected from server")
             except Exception as e:
-                print(f"IMDProducer: Error during disconnect: {e}")
+                logger.debug(f"IMDProducer: Error during disconnect: {e}")
 
 
 class CircularByteBuf:
