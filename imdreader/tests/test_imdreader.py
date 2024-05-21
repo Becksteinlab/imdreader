@@ -16,7 +16,7 @@ from MDAnalysisTests.coordinates.base import assert_timestep_almost_equal
 import sys
 import threading
 import logging
-from pwn import *
+import subprocess
 
 """
 mdout generated using 
@@ -42,8 +42,29 @@ IMD: Will wait until I have a connection and IMD_GO orders.
 """
 
 
+@pytest.fixture(autouse=True)
+def log_config():
+    logger = logging.getLogger("imdreader.IMDREADER")
+    file_handler = logging.FileHandler("test.log")
+    formatter = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+    logger.setLevel(logging.DEBUG)
+    yield
+    logger.removeHandler(file_handler)
+
+
 @pytest.fixture()
 def run_gmx(tmpdir):
+    # make sure some other process is not using the port
+    try:
+        assert check_port_availability(8888) == True
+    except AssertionError:
+        print("Port 8888 is in use. Exiting.")
+        sys.exit(1)
+
     command = [
         "gmx",
         "mdrun",
@@ -54,22 +75,24 @@ def run_gmx(tmpdir):
         "-imdterm",
     ]
     with tmpdir.as_cwd():
-        p = process(
-            command,
-        )
-        try:
-            # Yield the process to the test function; control resumes here after test ends
-            yield p
-        finally:
-            # Ensure that the process is killed when the test ends, regardless of the result
-            p.terminate()  # Sends a terminate signal (SIGTERM)
-            try:
-                p.wait(
-                    timeout=10
-                )  # Give some time for the process to terminate gracefully
-            except TimeoutError:
-                p.kill()  # Force kill if it does not terminate within the timeout
-                p.wait()  # Wait again to ensure it's cleaned up
+        with open("gmx_output.log", "w") as f:
+            p = subprocess.Popen(
+                # command,
+                # stdin=subprocess.PIPE,
+                # stdout=subprocess.PIPE,
+                # stderr=subprocess.PIPE,
+                # text=True,
+                # bufsize=1,
+                command,
+                stdin=subprocess.PIPE,
+                stdout=f,
+                stderr=subprocess.STDOUT,  # Redirect stderr to stdout
+                text=True,
+                bufsize=1,
+            )
+            yield "gmx_output.log"
+            p.terminate()
+            p.wait()
 
 
 # NOTE: This test can't pass until dimensions are implemented in IMD 2.0
@@ -120,8 +143,10 @@ def run_gmx(tmpdir):
 
 
 def test_traj_len(run_gmx):
-    run_gmx.readuntil(
-        "IMD: Will wait until I have a connection and IMD_GO orders."
+    recvuntil(
+        run_gmx,
+        "IMD: Will wait until I have a connection and IMD_GO orders.",
+        60,
     )
     u2 = mda.Universe(IMDGROUP_GRO, OUT_TRR)
     u = mda.Universe(
@@ -130,22 +155,19 @@ def test_traj_len(run_gmx):
         num_atoms=100,
     )
     for ts in u.trajectory:
-        # Wait to simulate analysis
-        sleep(0.1)
+        pass
 
     assert len(u2.trajectory) == len(u.trajectory)
 
 
-# NOTE: this test passes because the
-# buffer threshold is set for 10% since the lennard jones simulation is so quick
-# make sure to change this value in run() before actual use
-def test_pause(run_gmx):
+def test_pause(run_gmx, caplog):
 
     # NOTE: assert this in output: Un-pause command received.
     # Provide a buffer small enough to force pausing the simulation
-    run_gmx.readuntil(
+    recvuntil(
+        run_gmx,
         "IMD: Will wait until I have a connection and IMD_GO orders.",
-        timeout=10,
+        60,
     )
     u = mda.Universe(
         IMDGROUP_GRO,
@@ -155,27 +177,30 @@ def test_pause(run_gmx):
         buffer_size=62000,
     )
     for ts in u.trajectory:
-        sleep(0.1)
+        time.sleep(0.05)
 
     assert len(u.trajectory) == 101
+    assert (
+        "IMDProducer: Pausing simulation because buffer is almost full"
+        in caplog.text
+    )
+    assert "IMDProducer: Unpausing simulation, buffer has space" in caplog.text
+    assert "data likely lost in frame" not in caplog.text
 
 
-# NOTE: This will fail before an exception queing system is setup
-# def test_no_connection():
-#
-#    # assert this in output: Un-pause command received.
-#    # Provide a buffer small enough to force pausing the simulation
-#
-#    u = mda.Universe(
-#        IMDGROUP_GRO,
-#        "localhost:8888",
-#        num_atoms=100,
-#        buffer_size=62000,
-#    )
-#    for ts in u.trajectory:
-#        sleep(0.1)
-#
-#    assert len(u.trajectory) == 100
+def test_no_connection(caplog):
+    u = mda.Universe(
+        IMDGROUP_GRO,
+        "localhost:8888",
+        num_atoms=100,
+        buffer_size=62000,
+    )
+    for ts in u.trajectory:
+        with pytest.raises(ConnectionError):
+            pass
+    # NOTE: assert this in output: No connection received. Pausing simulation.
+    assert "IMDProducer: Connection to localhost:8888 refused" in caplog.text
+
 
 """
 import socket

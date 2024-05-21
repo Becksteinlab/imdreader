@@ -5,6 +5,8 @@ from MDAnalysis.coordinates.memory import MemoryReader
 import numpy as np
 import socket
 import threading
+import time
+import select
 
 
 class DummyIMDServer(threading.Thread):
@@ -123,3 +125,49 @@ class DummyIMDServer(threading.Thread):
         self.conn.settimeout(1)
         self._await_go()
         self.conn.settimeout(None)
+
+
+def recvuntil(file_path, target_line, timeout):
+    """
+    Read from the file until the target line is found or the timeout occurs.
+
+    Args:
+        file_path (str): The path to the file to read from.
+        target_line (str): The line to wait for.
+        timeout (float): The timeout in seconds.
+
+    Returns:
+        str: The line containing the target line.
+
+    Raises:
+        TimeoutError: If the target line is not found within the timeout period.
+    """
+    end_time = time.time() + timeout
+    buffer = ""
+
+    while time.time() < end_time:
+        time.sleep(0.1)  # Small delay to avoid busy-waiting
+        with open(file_path, "r") as f:
+            lines = f.readlines()
+            for line in lines:
+                buffer += line
+                if target_line in line:
+                    return line
+    raise TimeoutError(
+        f"Timeout after {timeout} seconds waiting for '{target_line}'"
+    )
+
+
+def check_port_availability(port):
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        s.bind(("0.0.0.0", port))
+    except socket.error as e:
+        if e.errno == socket.errno.EADDRINUSE:
+            print(f"Port {port} is already in use")
+            return False
+        else:
+            raise
+    finally:
+        s.close()
+    return True

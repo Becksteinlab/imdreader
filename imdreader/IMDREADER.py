@@ -60,6 +60,8 @@ import signal
 import logging
 import time
 
+logger = logging.getLogger(__name__)
+
 
 class IMDReader(ReaderBase):
     """
@@ -111,8 +113,15 @@ class IMDReader(ReaderBase):
 
         self._buffer = CircularByteBuf(buffer_size, self.n_atoms, self.ts)
 
+        self._attempt_event = threading.Event()
+        self._success_event = threading.Event()
         self._producer = IMDProducer(
-            filename, self._buffer, self.n_atoms, socket_bufsize
+            filename,
+            self._buffer,
+            self.n_atoms,
+            self._attempt_event,
+            self._success_event,
+            socket_bufsize=socket_bufsize,
         )
 
         self._frame = -1
@@ -120,6 +129,14 @@ class IMDReader(ReaderBase):
     def _read_next_timestep(self):
         if self._frame == -1:
             self._producer.start()
+            # Wait for producer to connect to server
+            self._attempt_event.wait()
+            logger.debug("IMDReader: Waiting for producer to connect to server")
+            if not self._success_event.wait(timeout=5):
+                raise ConnectionRefusedError(
+                    "IMDReader: Failed to connect to server"
+                )
+            logger.debug("IMDReader: Producer connected to server")
 
         return self._read_frame(self._frame + 1)
 
@@ -184,6 +201,8 @@ class IMDProducer(threading.Thread):
         filename,
         buffer,
         n_atoms,
+        attempt_event=None,
+        success_event=None,
         socket_bufsize=None,
         pausable=True,
     ):
@@ -191,6 +210,9 @@ class IMDProducer(threading.Thread):
         self._host, self._port = parse_host_port(filename)
         self._conn = None
         self.running = False
+
+        self._attempt_event = attempt_event
+        self._success_event = success_event
 
         self._buffer = buffer
         self.n_atoms = n_atoms
@@ -296,12 +318,14 @@ class IMDProducer(threading.Thread):
             )
         self._conn.settimeout(5)
         try:
+            self._attempt_event.set()
             self._conn.connect((self._host, self._port))
         except ConnectionRefusedError:
-            self._buffer.producer_finished = True
-            raise ConnectionRefusedError(
+            logger.error(
                 f"IMDProducer: Connection to {self._host}:{self._port} refused"
             )
+            exit(1)
+        self._success_event.set()
         self._conn.settimeout(None)
         self._await_IMD_handshake()
         self._send_go_packet()

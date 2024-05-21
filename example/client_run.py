@@ -13,6 +13,12 @@ import logging
 from pwn import *
 import tempfile
 
+OUTPUT_FILE = "gmx_output.log"
+
+import os
+
+os.chdir("/home/law/workspace/imdreader/example/imdexample/testrun")
+
 
 def run_gmx():
     command = [
@@ -24,23 +30,30 @@ def run_gmx():
         "-imdpull",
         "-imdterm",
     ]
-
-    p = process(
-        command,
-    )
+    with open(OUTPUT_FILE, "w") as f:
+        p = subprocess.Popen(
+            command,
+            stdin=subprocess.PIPE,
+            stdout=f,
+            stderr=subprocess.STDOUT,  # Redirect stderr to stdout
+            text=True,
+            bufsize=1,
+        )
     return p
 
 
-def test_buffer_mgmt(run_gmx):
-    run_gmx.readuntil(
-        "IMD: Will wait until I have a connection and IMD_GO orders."
-    )
-    u = mda.Universe(IMDGROUP_GRO, "localhost:8888", num_atoms=100)
-    for ts in u.trajectory:
-        print(ts)
-    assert 1 == 1
-    assert 1 == 1
+def stream_subprocess_output(process):
+    while True:
+        output = process.stdout.readline()
+        if output == "" and process.poll() is not None:
+            break
+        if output:
+            print(output.strip())
+    rc = process.poll()
+    return rc
 
 
-run_gmx = run_gmx()
-test_buffer_mgmt(run_gmx)
+run_gmx_process = run_gmx()
+
+# Wait for the process to complete
+run_gmx_process.wait()
