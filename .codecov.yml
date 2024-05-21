@@ -13,4 +13,4 @@ comment:
   flags: null
   paths: null
 ignore:
-  - "streamreader/_version.py"
+  - "imdreader/_version.py"

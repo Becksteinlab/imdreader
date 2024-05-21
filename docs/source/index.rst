@@ -13,12 +13,4 @@ Welcome to IMDReader's documentation!
    getting_started
    api
    protocol_current
-
-
-
-Indices and tables
-==================
-
-* :ref:`genindex`
-* :ref:`modindex`
-* :ref:`search`
+   protocol_proposed

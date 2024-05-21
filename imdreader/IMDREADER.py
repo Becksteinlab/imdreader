@@ -1,3 +1,49 @@
+"""
+
+Example: Streaming an IMD v2 trajectory
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+To stream a trajectory from GROMACS or another simulation engine that supports 
+IMD v2, ensure that the simulation engine is running and waiting for an IMD connection.
+
+For example, in GROMACS, you can use ``gmx mdrun`` with the ``-imdwait`` flag
+to ensure that GROMACS will wait for a client before starting the simulation.
+In GROMACS, you will know that the simulation is ready and waiting for the
+MDAnalysis IMDReader client when this line is printed to the terminal:
+
+.. code-block:: none
+
+    IMD: Will wait until I have a connection and IMD_GO orders.
+
+Once the simulation is ready for a client connection, setup your :class:`Universe`
+like this: ::
+
+    import MDAnalysis as mda
+    # Pass host and port of the listening GROMACACS simulation
+    # server as the trajectory argument
+    # Number of atoms must be provided for internal buffer allocation
+    u = mda.Universe("topology.tpr", "localhost:8888", num_atoms=100)
+
+For more information on IMD v2 as it is implemented in GROMACS, see the imd command line
+arguments described `here <https://manual.gromacs.org/documentation/5.1/onlinehelp/gmx-mdrun.html>`_,
+the :ref:`v2_spec` writeup, and this `example simulation  <https://www.mpinat.mpg.de/grubmueller/interactivemd>`_. Note that 
+setting the following line in your ``.mdp`` file allows you to change which subset of the
+simulation is sent to the client via IMD v2:
+
+.. code-block:: none
+
+    ; Group to display and/or manipulate in interactive MD session
+    IMD-group                = System
+
+Classes
+^^^^^^^
+
+.. autoclass:: IMDReader
+   :members:
+   :inherited-members:
+
+"""
+
 from MDAnalysis.coordinates.base import (
     ReaderBase,
     FrameIteratorIndices,
@@ -38,6 +84,14 @@ class IMDReader(ReaderBase):
         socket_bufsize=None,
         **kwargs,
     ):
+        """
+        Parameters
+        ----------
+        filename : a string of the form "host:port" where host is the hostname
+            or IP address of the listening GROMACS server and port
+            is the port number.
+
+        """
         super(IMDReader, self).__init__(filename, **kwargs)
 
         # NOTE: Replace me with header packet which contains this information

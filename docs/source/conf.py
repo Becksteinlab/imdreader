@@ -15,14 +15,14 @@
 # In case the project was not installed
 import os
 import sys
+
 sys.path.insert(0, os.path.abspath("../.."))
 import imdreader  # noqa
 
 
-
 # -- Project information -----------------------------------------------------
 
-project = "StreamReader"
+project = "IMDReader"
 copyright = (
     "2024, Lawson. "
     "Project structure based on the "
@@ -60,9 +60,7 @@ autosummary_generate = True
 # This skips generating an autodoc of the test module
 # when using the autosummary directive that is included
 # by default in api.rst
-autodoc_mock_imports = [
-    'streamreader.tests'
-]
+autodoc_mock_imports = ["imdreader.tests"]
 napoleon_google_docstring = False
 napoleon_use_param = False
 napoleon_use_ivar = True
@@ -107,13 +105,11 @@ html_theme = "mdanalysis_sphinx_theme"
 # documentation.
 #
 html_theme_options = {
-
     "mda_official": False,
-
 }
 # Set your logo and favicon here -- replace the placeholders!
-html_logo = "_static/logo/placeholder_logo.png"
-html_favicon = "_static/logo/placeholder_favicon.svg"
+# html_logo = "_static/logo/placeholder_logo.png"
+# html_favicon = "_static/logo/placeholder_favicon.svg"
 
 
 # Add any paths that contain custom static files (such as style sheets) here,
@@ -135,7 +131,7 @@ html_static_path = ["_static"]
 # -- Options for HTMLHelp output ---------------------------------------------
 
 # Output file base name for HTML help builder.
-htmlhelp_basename = "streamreaderdoc"
+htmlhelp_basename = "imdreaderdoc"
 
 
 # -- Options for LaTeX output ------------------------------------------------
@@ -144,15 +140,12 @@ latex_elements = {
     # The paper size ("letterpaper" or "a4paper").
     #
     # "papersize": "letterpaper",
-
     # The font size ("10pt", "11pt" or "12pt").
     #
     # "pointsize": "10pt",
-
     # Additional stuff for the LaTeX preamble.
     #
     # "preamble": "",
-
     # Latex figure (float) alignment
     #
     # "figure_align": "htbp",
@@ -162,8 +155,13 @@ latex_elements = {
 # (source start file, target name, title,
 #  author, documentclass [howto, manual, or own class]).
 latex_documents = [
-    (master_doc, "streamreader.tex", "StreamReader Documentation",
-     "streamreader", "manual"),
+    (
+        master_doc,
+        "IMDreader.tex",
+        "IMDReader Documentation",
+        "imdreader",
+        "manual",
+    ),
 ]
 
 
@@ -171,10 +169,7 @@ latex_documents = [
 
 # One entry per manual page. List of tuples
 # (source start file, name, description, authors, manual section).
-man_pages = [
-    (master_doc, "streamreader", "StreamReader Documentation",
-     [author], 1)
-]
+man_pages = [(master_doc, "imdreader", "IMDReader Documentation", [author], 1)]
 
 
 # -- Options for Texinfo output ----------------------------------------------
@@ -183,9 +178,15 @@ man_pages = [
 # (source start file, target name, title, author,
 #  dir menu entry, description, category)
 texinfo_documents = [
-    (master_doc, "streamreader", "StreamReader Documentation",
-     author, "streamreader", "Prototype streamreader",
-     "Miscellaneous"),
+    (
+        master_doc,
+        "imdreader",
+        "IMDReader Documentation",
+        author,
+        "imdreader",
+        "Prototype imdreader",
+        "Miscellaneous",
+    ),
 ]
 
 

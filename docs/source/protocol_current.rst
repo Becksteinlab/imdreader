@@ -1,19 +1,22 @@
+.. _v2_spec:
 
-IMD Protocol as it is currently implemented in GROMACS
-======================================================
+IMD Protocol in GROMACS
+=======================
 
-Version: 2
-Headersize: 8 bytes (two 32 bit integers)
-Endianness: Little endian and big endian are both allowed for position and energy data. In headers, big endian is used except in 
-            the handshake signal where the endianness of the server is preserved unswapped in the packet for the client to check.
+For developers interested in implementing the IMD v2 protocol, this document provides a fairly comprehensive specification of the protocol. 
+The protocol is implemented in the GROMACS in all versions starting from 5.0. The source code can be found
+in the ``src/gromacs/imd`` directory.
 
-Only one client is allowed per GROMACS server at a time
+- Version: 2
+- Header size: 8 bytes (two 32 bit integers)
+- Endianness: Big endian used for headers, except in "go" packet- see protocol steps below. Either endianness acceptable for packet bodies (position, force, and energy data).
+- Number of clients per server: only 1 allowed
 
 Header types
 ------------
 
-GROMACS->Client Headers
-^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Headers sent by the GROMACS server to the client
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 .. list-table::
    :widths: 10 30 90
@@ -24,16 +27,16 @@ GROMACS->Client Headers
      - Description
    * - IMD_ENERGIES
      - 1
-     - 
+     - Energy data for the system. For more information, see the `GROMACS code manual <https://manual.gromacs.org/5.1/doxygen/html-full/structIMDEnergyBlock.xhtml>`_
    * - IMD_FCOORDS
      - 2
-     - 
+     - Position data for all atoms in the system
    * - IMD_HANDSHAKE
      - 4
-     -
+     - Sent to the client to inform the client of the version of the protocol being used as well as the endianness of the data
 
-Client->GROMACS Headers
-^^^^^^^^^^^^^^^^^^^^^^^^
+Headers sent by the client to the GROMACS server
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 .. list-table::
    :widths: 10 30 90
@@ -44,18 +47,19 @@ Client->GROMACS Headers
      - Description
    * - IMD_DISCONNECT
      - 0
-     - Tells the GROMACS server to disconnect its client socket and reset its IMD step to its default
+     - Tells the GROMACS server to disconnect its client socket. If ``-imdwait`` is set, the GROMACS simulation
+       will pause until the client reconnects and performs the handshake again.
    * - IMD_GO
      - 3
      - After receiving the handshake from GROMACS, the client has 1 second to send this signal to the server to begin
-       receiving data. If the server does not receive this signal, it will disconnect the client. If the GROMACS server
+       receiving data. If the server does not receive this signal, it will disconnect the client and wait for another connection. If the GROMACS server
        was started with ``-imdwait``, the simulation will not begin until this signal is received.
    * - IMD_KILL
      - 5
      - Tells GROMACS to stop the simulation (requires that the simulation was started with ``-imdterm``)
    * - IMD_MDCOMM
      - 6
-     - 
+     - Inputs forces into the GROMACS simulation (requires that the simulation was started with ``-imdpull``)
    * - IMD_PAUSE
      - 7
      - After simulation has started, the client can send this signal to the GROMACS server to toggle the 
@@ -63,7 +67,7 @@ Client->GROMACS Headers
        the client sends another IMD_PAUSE signal.
    * - IMD_TRATE
      - 8
-     - 
+     - Adjusts the transmission rate in timesteps of the data from the server to the client. A value of 0 resets the rate to the default.
 
 Unused headers
 ^^^^^^^^^^^^^^
@@ -86,75 +90,88 @@ Protocol steps
 --------------
 
 1. Pre-connection
-#################
-GROMACS (Server) 1: Decide if simulation should wait for a client to connect to begin using option
-GROMACS (Server) 2: Decide if IMD client should be able to terminate the simulation using option
-GROMACS (Server) 3: Decide if pulling force data from the client is allowed using option
-GROMACS (Server) 4: If waiting for client, block simulation run until GO signal received
+^^^^^^^^^^^^^^^^^
+
+.. code-block:: none
+
+  GROMACS 1: Read -imdwait, -imdpull, and -imdterm options from the command line
+  GROMACS 2: If -imdwait is set, block simulation run until GO signal received
 
 2. Connection
-#############
-GROMACS (Server) 1: Create a TCP socket and bind it to a port
-GROMACS (Server) 2: Listen for incoming connections, checking every 1 second
-GROMACS (Server) 3: Accept the incoming connection, binding it to a new socket
-GROMACS (Server) 4: Send the handshake signal to the client:
+^^^^^^^^^^^^^
 
-Header: 
-    4 (IMD_HANDSHAKE)
-    2 (Version, must be unswapped)
+.. code-block:: none
 
-GROMACS (Server) 5: Wait up to 1 second to receive a GO signal from the client:
+  GROMACS 1: Create a TCP socket and bind it to a port
+  GROMACS 2: Listen for incoming connections, checking every 1 second
+  Client 1: Connect to the server
+  GROMACS 3: Accept the incoming connection, binding it to a new socket
+  GROMACS 4: Send the handshake signal to the client:
 
-Header:
-    3 (IMD_GO)
-    <val> (Unused length attribute in header)
+    Header: 
+        4 (int32) (IMD_HANDSHAKE)
+        2 (int32) (Protocol version, must be unswapped so client can determine endianness)
 
-GROMACS (Server) 6: In every iteration of the md_do loop, first check for incoming packets from the client. These packets can be:
+  GROMACS 5: Wait up to 1 second to receive a GO signal from the client:
 
     Header:
-        5 (IMD_KILL)
+        3 (int32) (IMD_GO)
+        <val> (Unused attribute in header)
+
+  * If the GO signal is not received, disconnect the client and wait for another connection *
+  * After the client connects again, repeat the handshake and GO signal steps *
+
+  Client 2: Send the GO signal to the server. All subsequent header packets will have big endianness 
+            and all data packets will have the endianness specified in the handshake.
+  
+3. Simulation loop
+^^^^^^^^^^^^^^^^^^
+
+.. code-block:: none
+
+  GROMACS (Server) 1: In every simulation integration step loop, check for incoming packets from the 
+                      client. These packets can be one of:
+
+    Header:
+        5 (int32) (IMD_KILL)
+        <val> (Unused attribute in header)
+
+    Header:
+        0 (int32) (IMD_DISCONNECT)
         <val> (Unused length attribute in header)
 
     Header:
-        0 (IMD_DISCONNECT)
-        <val> (Unused length attribute in header)
-
-    Header:
-        6 (IMD_MDCOMM)
-        <val> (Number of forces that will be sent in the packet)
+        6 (int32) (IMD_MDCOMM)
+        <val> (int32) (Number of forces that will be sent in the packet)
 
         Force packet:
-            <count> of 32 byte force integers representing indices of atoms to apply force to
-            <val> * 3 number of 32 byte force floats representing the force to apply to the atoms at 
-            the corresponding indices
+            <val> (int32) (n indices of atoms to apply force to)
+            <val> (float32) (n * 3 forces to apply to the atoms at the corresponding indices)
 
     Header:
-        7 (IMD_PAUSE)
+        7 (int32) (IMD_PAUSE)
         <val> (Unused length attribute in header)
 
     Header:
-        8 (IMD_TRATE)
-        <val> (New transfer rate. Value of 0 means reset to default)
+        8 (int32) (IMD_TRATE)
+        <val> (int32) (New transfer rate. Value of 0 means reset to default)
 
-    Any other header sent will disconnect the client and print an error message but not stop the simulation.
+    * If any other header is recieved, disconnect the client and print an error message and wait for 
+      another client connection *
+    * After the client connects again, repeat the handshake and GO signal steps *
 
-Next, send energies and position data to the client IF this integration step lands in the rate step specified by the client (or the default, every step)
+    GROMACS (Server) 2: Send energies and position data to the client if this timestep step lands
+                        in the rate specified by the client (or the default, every timestep)
 
-    Header:
-        1 (IMD_ENERGIES)
-        1 (Contstant value)
-    Header:
-        2 (IMD_FCOORDS)
-        <val> (Number of atoms in the system)
+      Header:
+          1 (int32) (IMD_ENERGIES)
+          1 (int32) (Contstant value)
 
-        Position packet:
+        Energy packet:
+          <val> (float32) (1 float with the timestep and 9 floats describing the energy of the system)
+      Header:
+          2 (IMD_FCOORDS)
+          <val> (int32) (Number of atoms in the system)
 
-
-
-
-3. Disconnection
-################
-GROMACS (Server) 1: Shutdown the socket if it isn't already shutdown
-GROMACS (Server) 2: Set the IMD frequency to default and begin listening for connections again
-
-# If connecting a second time, handshake must be sent a second time (test this)
+          Position packet:
+            <val> (float32) (n atoms * 3 floats describing the position of each atom in the system)
