@@ -1,4 +1,4 @@
-name: reader-test
+name: imdreader-test
 channels:
   - conda-forge
   - defaults
