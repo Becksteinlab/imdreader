@@ -285,8 +285,7 @@ class IMDProducer(threading.Thread):
             self.stop()
             logger.warning(
                 "IMDProducer: Connection reset during pausing, "
-                + "data likely lost in frame "
-                + f"{self.parsed_frames}"
+                "data likely lost in frame {}".format(self.parsed_frames)
             )
 
     def _unpause_simulation(self):
@@ -302,8 +301,7 @@ class IMDProducer(threading.Thread):
             self.stop()
             logger.warning(
                 "IMDProducer: Connection reset during unpausing, "
-                + "data likely lost in frame "
-                + f"{self.parsed_frames}"
+                "data likely lost in frame {}".format(self.parsed_frames)
             )
 
     def _connection_sequence(self):
@@ -415,7 +413,7 @@ class IMDProducer(threading.Thread):
             if not b:
                 logger.debug(
                     "IMDProducer: Assuming simulation is over at frame "
-                    + f"#{self.parsed_frames - 1} due to closed connection"
+                    "{} due to closed connection".format(self.parsed_frames - 1)
                 )
                 self.running = False
                 self._buffer.producer_finished = True
@@ -469,7 +467,7 @@ class IMDProducer(threading.Thread):
                     self._is_disconnected = True
                     self.stop()
                     logger.warning(
-                        f"IMDProducer: Data likely lost in frame {self.parsed_frames}"
+                        "IMDProducer: Data likely lost in frame {}".format(self.parsed_frames)
                     )
                     raise ConnectionError("Socket connection was closed")
             except BlockingIOError:
