@@ -421,7 +421,7 @@ class IMDProducer(threading.Thread):
         except socket.timeout:
             logger.debug(
                 "IMDProducer: Assuming simulation is over at frame "
-                + "#{} due to read timeout,".format(self.parsed_frames - 1)
+                "#{} due to read timeout,".format(self.parsed_frames - 1)
             )
             self.running = False
             self._buffer.producer_finished = True
