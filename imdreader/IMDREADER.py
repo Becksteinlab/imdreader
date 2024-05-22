@@ -421,7 +421,7 @@ class IMDProducer(threading.Thread):
         except socket.timeout:
             logger.debug(
                 "IMDProducer: Assuming simulation is over at frame "
-                + f"#{self.parsed_frames - 1} due to read timeout"
+                + "#{} due to read timeout,".format(self.parsed_frames - 1)
             )
             self.running = False
             self._buffer.producer_finished = True
@@ -467,7 +467,9 @@ class IMDProducer(threading.Thread):
                     self._is_disconnected = True
                     self.stop()
                     logger.warning(
-                        "IMDProducer: Data likely lost in frame {}".format(self.parsed_frames)
+                        "IMDProducer: Data likely lost in frame {}".format(
+                            self.parsed_frames
+                        )
                     )
                     raise ConnectionError("Socket connection was closed")
             except BlockingIOError:
