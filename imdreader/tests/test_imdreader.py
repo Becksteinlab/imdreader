@@ -56,10 +56,10 @@ def log_config():
     logger.removeHandler(file_handler)
 
 
-@pytest.fixture()
+@pytest.fixture(scope="function")
 def run_gmx(tmpdir):
     # make sure some other process is not using the port
-    if not wait_for_port(8888, 60, 2):
+    if not wait_for_port(8888, 120, 2):
         pytest.fail("Port 8888 not open after 60s")
 
     command = [
@@ -81,9 +81,22 @@ def run_gmx(tmpdir):
                 text=True,
                 bufsize=1,
             )
-            yield "gmx_output.log"
-            p.terminate()
-            p.wait()
+            try:
+                yield "gmx_output.log"
+            finally:
+                # Terminate the process
+                p.terminate()
+                try:
+                    p.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    logger.error(
+                        "Process did not terminate in time, killing it."
+                    )
+                    p.kill()
+                    p.wait()
+
+                # Ensure all file descriptors are closed
+                f.close()
 
 
 # NOTE: This test can't pass until dimensions are implemented in IMD 2.0
