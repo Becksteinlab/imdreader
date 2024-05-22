@@ -59,11 +59,8 @@ def log_config():
 @pytest.fixture()
 def run_gmx(tmpdir):
     # make sure some other process is not using the port
-    try:
-        assert check_port_availability(8888) == True
-    except AssertionError:
-        print("Port 8888 is in use. Exiting.")
-        sys.exit(1)
+    if not wait_for_port(8888, 60, 2):
+        pytest.fail("Port 8888 not open after 60s")
 
     command = [
         "gmx",
@@ -77,16 +74,10 @@ def run_gmx(tmpdir):
     with tmpdir.as_cwd():
         with open("gmx_output.log", "w") as f:
             p = subprocess.Popen(
-                # command,
-                # stdin=subprocess.PIPE,
-                # stdout=subprocess.PIPE,
-                # stderr=subprocess.PIPE,
-                # text=True,
-                # bufsize=1,
                 command,
                 stdin=subprocess.PIPE,
                 stdout=f,
-                stderr=subprocess.STDOUT,  # Redirect stderr to stdout
+                stderr=f,
                 text=True,
                 bufsize=1,
             )

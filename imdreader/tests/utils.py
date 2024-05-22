@@ -171,3 +171,12 @@ def check_port_availability(port):
     finally:
         s.close()
     return True
+
+
+def wait_for_port(port, timeout, interval):
+    start_time = time.time()
+    while time.time() - start_time < timeout:
+        if check_port_availability(port):
+            return True
+        time.sleep(interval)
+    return False

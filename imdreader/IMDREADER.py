@@ -321,10 +321,13 @@ class IMDProducer(threading.Thread):
             self._attempt_event.set()
             self._conn.connect((self._host, self._port))
         except ConnectionRefusedError:
+            self.stop()
             logger.error(
                 f"IMDProducer: Connection to {self._host}:{self._port} refused"
             )
-            exit(1)
+            raise ConnectionRefusedError(
+                f"IMDProducer: Connection to {self._host}:{self._port} refused"
+            )
         self._success_event.set()
         self._conn.settimeout(None)
         self._await_IMD_handshake()
@@ -512,8 +515,10 @@ class IMDProducer(threading.Thread):
                 self._conn.sendall(disconnect)
                 self._conn.close()
                 logger.debug("IMDProducer: Disconnected from server")
-            except Exception as e:
-                logger.debug(f"IMDProducer: Error during disconnect: {e}")
+            except ConnectionResetError:
+                logger.debug(
+                    f"IMDProducer: Server already terminated the connection"
+                )
 
 
 class CircularByteBuf:
