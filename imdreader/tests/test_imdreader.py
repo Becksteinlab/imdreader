@@ -156,7 +156,6 @@ def test_traj_len(run_gmx):
     u = mda.Universe(
         IMDGROUP_GRO,
         f"localhost:{port}",
-        num_atoms=100,
     )
     for ts in u.trajectory:
         pass
@@ -174,7 +173,6 @@ def test_pause(run_gmx, caplog):
     u = mda.Universe(
         IMDGROUP_GRO,
         f"localhost:{port}",
-        num_atoms=100,
         # 1240 bytes per frame
         buffer_size=62000,
     )
@@ -194,7 +192,6 @@ def test_no_connection(caplog):
     u = mda.Universe(
         IMDGROUP_GRO,
         "localhost:8888",
-        num_atoms=100,
         buffer_size=62000,
     )
     for ts in u.trajectory:

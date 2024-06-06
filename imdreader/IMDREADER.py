@@ -21,8 +21,7 @@ like this: ::
     import MDAnalysis as mda
     # Pass host and port of the listening GROMACACS simulation
     # server as the trajectory argument
-    # Number of atoms must be provided for internal buffer allocation
-    u = mda.Universe("topology.tpr", "localhost:8888", num_atoms=100)
+    u = mda.Universe("topology.tpr", "localhost:8888")
 
 For more information on IMD v2 as it is implemented in GROMACS, see the imd command line
 arguments described `here <https://manual.gromacs.org/documentation/5.1/onlinehelp/gmx-mdrun.html>`_,
@@ -81,7 +80,7 @@ class IMDReader(ReaderBase):
         self,
         filename,
         convert_units=True,
-        num_atoms=None,
+        n_atoms=None,
         buffer_size=2**26,
         socket_bufsize=None,
         **kwargs,
@@ -98,9 +97,9 @@ class IMDReader(ReaderBase):
 
         # NOTE: Replace me with header packet which contains this information
         # OR get this information from the topology?
-        if not num_atoms:
-            raise ValueError("num_atoms must be specified")
-        self.n_atoms = num_atoms
+        if not n_atoms:
+            raise ValueError("`n_atoms` kwarg must be specified")
+        self.n_atoms = n_atoms
         self.ts = self._Timestep(
             self.n_atoms, positions=True, **self._ts_kwargs
         )
