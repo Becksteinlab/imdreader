@@ -21,13 +21,16 @@ The suggested changes to the protocol are as follows:
         <val> (bit) (imdwait: true or false)
         <val> (bit) (imdterm: true or false)
         <val> (bit) (wrapped positions: true or false)
+        <val> (bit) (energies included: true or false)
+        <val> (bit) (dimensions included: true or false)
         <val> (bit) (positions included: true or false)
         <val> (bit) (velocities included: true or false)
+
         <val> (bit) (forces included: true or false)
-        <val> (bit) (dimensions included: true or false)
-        
-        "wrapped positions" will be a new ``.mdp`` setting which specifies whether the atoms' positions
-        should be adjusted to fit within the simulation box before sending. This is useful for visualization purposes.
+        <val> (7 bits) (unused)
+
+   "wrapped positions" will be a new ``.mdp`` setting which specifies whether the atoms' positions
+   should be adjusted to fit within the simulation box before sending. This is useful for visualization purposes.
 
 3. The server should wait longer than 1 second (possibly up to 60s) for the go signal so that the client 
    has plenty of time to allocate memory buffers based on the endianness and information on included data types 
@@ -35,13 +38,15 @@ The suggested changes to the protocol are as follows:
 
 4. In the simulation loop, the server will send the client data in this order (if the configuration says to send it)
     
-    i. Dimension data (IMD_DIM) in triclinic vectors
+    i. Energy data (IMD_ENERGIES) unchanged
+    
+    ii. Dimension data (IMD_BOX) in triclinic vectors
 
-    ii. Position data (IMD_FCOORDS)
+    iii. Position data (IMD_FCOORDS) unchanged except box adjustments (see 5)
     
-    iii. Velocity data (IMD_VELS) in the same manner as positions
+    iv. Velocity data (IMD_VELS) in the same manner as positions
     
-    iv. Force data (IMD_FORCES) in the same manner as positions
+    v. Force data (IMD_FORCES) in the same manner as positions
 
 5. The server will send a new IMD_EOS (end of stream) packet after the last frame is sent unless the client initiates the disconnection with
    IMD_DISCONNECT.
