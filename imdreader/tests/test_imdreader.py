@@ -58,13 +58,7 @@ def log_config():
 
 @pytest.fixture()
 def run_gmx(tmpdir):
-    # make sure some other process is not using the port
-    try:
-        assert check_port_availability(8888) == True
-    except AssertionError:
-        print("Port 8888 is in use. Exiting.")
-        sys.exit(1)
-
+    port = get_free_port()
     command = [
         "gmx",
         "mdrun",
@@ -73,6 +67,8 @@ def run_gmx(tmpdir):
         "-imdwait",
         "-imdpull",
         "-imdterm",
+        "-imdport",
+        str(port),
     ]
     with tmpdir.as_cwd():
         with open("gmx_output.log", "w") as f:
@@ -90,7 +86,7 @@ def run_gmx(tmpdir):
                 text=True,
                 bufsize=1,
             )
-            yield "gmx_output.log"
+            yield port
             p.terminate()
             p.wait()
 
@@ -143,15 +139,16 @@ def run_gmx(tmpdir):
 
 
 def test_traj_len(run_gmx):
+    port = run_gmx
     recvuntil(
-        run_gmx,
+        "gmx_output.log",
         "IMD: Will wait until I have a connection and IMD_GO orders.",
         60,
     )
     u2 = mda.Universe(IMDGROUP_GRO, OUT_TRR)
     u = mda.Universe(
         IMDGROUP_GRO,
-        "localhost:8888",
+        f"localhost:{port}",
         num_atoms=100,
     )
     for ts in u.trajectory:
@@ -161,17 +158,15 @@ def test_traj_len(run_gmx):
 
 
 def test_pause(run_gmx, caplog):
-
-    # NOTE: assert this in output: Un-pause command received.
-    # Provide a buffer small enough to force pausing the simulation
+    port = run_gmx
     recvuntil(
-        run_gmx,
+        "gmx_output.log",
         "IMD: Will wait until I have a connection and IMD_GO orders.",
         60,
     )
     u = mda.Universe(
         IMDGROUP_GRO,
-        "localhost:8888",
+        f"localhost:{port}",
         num_atoms=100,
         # 1240 bytes per frame
         buffer_size=62000,

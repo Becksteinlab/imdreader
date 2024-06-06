@@ -346,13 +346,13 @@ class IMDProducer(threading.Thread):
             if self.pausable:
                 if (
                     not self.paused
-                    and self._full_frames >= self._buffer.capacity // 10
+                    and self._full_frames >= self._buffer.capacity // 2
                 ):
                     self._pause_simulation()
 
-            # Simulation will unpause in _if
-            # 1. buffer is almost empty
-            # 2. socket is emptied
+            # Simulation will unpause during frame parsing if
+            # 1. buffer is empty
+            # 2. socket is empty
 
             # Only check for simulation end if we're not paused
             # otherwise we can get a false positive
