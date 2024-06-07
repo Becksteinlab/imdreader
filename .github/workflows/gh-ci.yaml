@@ -101,7 +101,7 @@ jobs:
 
     - name: Run tests
       run: |
-        pytest -v --cov=imdreader --cov-report=xml --color=yes imdreader/tests/
+        pytest -n auto -v --cov=imdreader --cov-report=xml --color=yes imdreader/tests/
 
     - name: codecov
       if: github.repository == 'becksteinlab/imdreader' && github.event_name != 'schedule'
