@@ -4,7 +4,7 @@ IMD Protocol in GROMACS
 =======================
 
 For developers interested in implementing the IMD v2 protocol, this document provides a fairly comprehensive specification of the protocol. 
-The protocol is implemented in the GROMACS in all versions starting from 5.0. The source code can be found
+The protocol is implemented in GROMACS in all versions starting from 5.0. The source code can be found
 in the ``src/gromacs/imd`` directory.
 
 - Version: 2
@@ -170,7 +170,7 @@ Protocol steps
         Energy packet:
           <val> (float32) (1 float with the timestep and 9 floats describing the energy of the system)
       Header:
-          2 (IMD_FCOORDS)
+          2 (int32) (IMD_FCOORDS)
           <val> (int32) (Number of atoms in the system)
 
           Position packet:
