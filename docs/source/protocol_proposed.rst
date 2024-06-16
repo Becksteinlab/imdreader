@@ -20,14 +20,13 @@ The suggested changes to the protocol are as follows:
         <val> (bit) (imdpull: true or false)
         <val> (bit) (imdwait: true or false)
         <val> (bit) (imdterm: true or false)
-        <val> (bit) (wrapped positions: true or false)
-        <val> (bit) (energies included: true or false)
-        <val> (bit) (dimensions included: true or false)
-        <val> (bit) (positions included: true or false)
-        <val> (bit) (velocities included: true or false)
+        <val> (bit) (wrapped positions: true or false. if positions rate is 0, this is a placeholder value)
 
-        <val> (bit) (forces included: true or false)
-        <val> (7 bits) (unused)
+        <val> (int32) (energies rate: number of steps that elapse between steps that contain energy data. 0 means never)
+        <val> (int32) (dimensions rate: number of steps that elapse between steps that contain dimension data. 0 means never)
+        <val> (int32) (positions rate: number of steps that elapse between steps that contain position data. 0 means never)
+        <val> (int32) (velocities rate: number of steps that elapse between steps that contain velocity data. 0 means never)
+        <val> (int32) (forces rate: number of steps that elapse between steps that contain force data. 0 means never)
 
    "wrapped positions" will be a new ``.mdp`` setting which specifies whether the atoms' positions
    should be adjusted to fit within the simulation box before sending. This is useful for visualization purposes.

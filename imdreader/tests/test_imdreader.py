@@ -88,9 +88,6 @@ def run_gmx(tmpdir):
                 try:
                     p.wait(timeout=10)
                 except subprocess.TimeoutExpired:
-                    logger.error(
-                        "Process did not terminate in time, killing it."
-                    )
                     p.kill()
                     p.wait()
 
@@ -195,10 +192,10 @@ def test_no_connection(caplog):
         buffer_size=62000,
     )
     for ts in u.trajectory:
-        with pytest.raises(ConnectionError):
+        with pytest.raises(ConnectionRefusedError):
             pass
     # NOTE: assert this in output: No connection received. Pausing simulation.
-    assert "IMDProducer: Connection to localhost:8888 refused" in caplog.text
+    assert "IMDReader: Connection to localhost:8888 refused" in caplog.text
 
 
 """

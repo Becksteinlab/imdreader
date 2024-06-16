@@ -2,6 +2,10 @@ import socket
 import struct
 import logging
 from enum import Enum, auto
+from typing import Union
+from dataclasses import dataclass
+import abc
+import threading
 
 """
 IMD Packets have an 8 byte header and a variable length payload 
@@ -17,7 +21,8 @@ of the IMD protocol
 """
 IMDHEADERSIZE = 8
 IMDENERGYPACKETLENGTH = 40
-IMDVERSION = 2
+IMDBOXPACKETLENGTH = 36
+IMDVERSIONS = {2, 3}
 
 
 class IMDType(Enum):
@@ -31,6 +36,11 @@ class IMDType(Enum):
     IMD_PAUSE = 7
     IMD_TRATE = 8
     IMD_IOERROR = 9
+    # New in IMD v3
+    IMD_BOX = 10
+    IMD_VELS = 11
+    IMD_FORCES = 12
+    IMD_EOS = 13
 
 
 class IMDHeader:
@@ -39,6 +49,32 @@ class IMDHeader:
     def __init__(self, msg_type: IMDType, length: int):
         self.type = msg_type
         self.length = length
+
+
+@dataclass
+class IMDSessionInfo:
+    """Convenience class to represent the session information of an IMD connection
+
+    '<' represents little endian and '>' represents big endian
+
+    Data should be loaded into and out of buffers in the order of the fields in this class
+    if present in the session for that step, i.e.
+        1. energies,
+        2. dimensions,
+        etc.
+    """
+
+    version: int
+    endianness: str
+    imdterm: Union[bool, None]
+    imdwait: Union[bool, None]
+    imdpull: Union[bool, None]
+    wrapped_coords: bool
+    energies: int
+    dimensions: int
+    positions: int
+    velocities: int
+    forces: int
 
 
 def create_header_bytes(msg_type: IMDType, length: int):
