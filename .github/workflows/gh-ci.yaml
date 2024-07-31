@@ -111,6 +111,13 @@ jobs:
         name: codecov-${{ matrix.os }}-py${{ matrix.python-version }}
         verbose: True
 
+    - name: Breakpoint if tests failed
+      if: failure()
+      uses: namespacelabs/breakpoint-action@v0
+      with:
+        duration: 30m
+        authorized-users: ljwoods2
+
 
   pylint_check:
     if: "github.repository == 'becksteinlab/imdreader'"
