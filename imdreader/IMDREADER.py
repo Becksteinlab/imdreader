@@ -43,6 +43,7 @@ Classes
 
 """
 
+import queue
 from MDAnalysis.coordinates.base import (
     ReaderBase,
     FrameIteratorIndices,
@@ -96,9 +97,9 @@ class IMDReader(ReaderBase):
         """
         self._producer = None
         super(IMDReader, self).__init__(filename, **kwargs)
-        if not n_atoms:
-            raise ValueError("`n_atoms` kwarg must be specified")
+
         self.n_atoms = n_atoms
+        logger.debug(f"IMDReader: n_atoms: {self.n_atoms}")
 
         self.units = {
             "time": "ps",
@@ -122,11 +123,10 @@ class IMDReader(ReaderBase):
             imdsinfo = self._await_IMD_handshake(conn)
 
             if imdsinfo.version == 2:
-                self._ts = self._Timestep(self.n_atoms, positions=True)
                 self._buffer = CircularByteBuf(
-                    self._buffer_size, self.n_atoms, self._ts, imdsinfo
+                    self._buffer_size, imdsinfo, self._Timestep, self.n_atoms
                 )
-                self._producer = IMDv2Producer(
+                self._producer = IMDProducer(
                     conn,
                     self._buffer,
                     imdsinfo,
@@ -139,10 +139,9 @@ class IMDReader(ReaderBase):
 
     def _read_frame(self, frame):
 
-        # loads the timestep with step, positions, and energy
-        self._buffer.consume_next_timestep()
-        self._ts.frame = self._frame + 1
+        self._ts = self._buffer.consume_next_timestep()
 
+        logger.debug(f"self._ts.positions: {self._ts.positions}")
         # Must set frame after read occurs successfully
         # Since buffer raises IO error
         # after producer is finished and there are no more frames
@@ -181,20 +180,24 @@ class IMDReader(ReaderBase):
         end = ">"
         ver = None
 
-        handshake = parse_header_bytes(conn.recv(IMDHEADERSIZE))
-        if handshake.type != IMDType.IMD_HANDSHAKE:
+        h_buf = bytearray(IMDHEADERSIZE)
+        handshake_recieved = read_into_buf(conn, h_buf)
+        if not handshake_recieved:
+            raise ConnectionError("IMDReader: No handshake received.")
+
+        header = IMDHeader(h_buf)
+
+        if header.type != IMDHeaderType.IMD_HANDSHAKE:
             raise ValueError(
-                f"Expected packet type {IMDType.IMD_HANDSHAKE}, got {handshake.type}"
+                f"Expected header type `IMD_HANDSHAKE`, got {header.type}"
             )
 
-        if handshake.length not in IMDVERSIONS:
+        if header.length not in IMDVERSIONS:
             # Try swapping endianness
-            swapped = struct.unpack("<i", struct.pack(">i", handshake.length))[
-                0
-            ]
+            swapped = struct.unpack("<i", struct.pack(">i", header.length))[0]
             if swapped not in IMDVERSIONS:
-                err_version = min(swapped, handshake.length)
-                # Don't call stop, simulation hasn't started yet
+                err_version = min(swapped, header.length)
+                # NOTE: Add test for this
                 raise ValueError(
                     f"Incompatible IMD version. Expected version in {IMDVERSIONS}, got {err_version}"
                 )
@@ -202,7 +205,7 @@ class IMDReader(ReaderBase):
                 end = "<"
                 ver = swapped
         else:
-            ver = handshake.length
+            ver = header.length
 
         sinfo = None
         if ver == 2:
@@ -220,6 +223,9 @@ class IMDReader(ReaderBase):
                 velocities=0,
                 forces=0,
             )
+        elif ver == 3:
+            sinfo = parse_imdv3_session_info(conn, end)
+
         return sinfo
 
     @property
@@ -241,8 +247,10 @@ class IMDReader(ReaderBase):
     def close(self):
         """Gracefully shut down the reader. Stops the producer thread."""
         if self._producer is not None:
-            self._producer.stop()
-            self._producer.join()
+            self._buffer.notify_consumer_finished()
+            # NOTE: is join necessary here?
+            # self._producer.join()
+        # NOTE: removeme after testing
         print("IMDReader shut down gracefully.")
 
     # Incompatible methods
@@ -258,370 +266,203 @@ class IMDReader(ReaderBase):
         """
         raise RuntimeError("IMDReader: Trajectory can only be read in for loop")
 
+    # NOTE: prevent auxiliary iteration methods from being called
 
-class AbstractIMDProducer(abc.ABC, threading.Thread):
 
-    def __init__(self, conn, buffer, imdsinfo, n_atoms):
-        # call threading.Thread init
-        super(AbstractIMDProducer, self).__init__()
+class IMDProducer(threading.Thread):
+
+    def __init__(self, conn, buffer, sinfo, n_atoms):
+        super(IMDProducer, self).__init__()
         self._conn = conn
-        self.imdsinfo = imdsinfo
-        self.running = False
-        self.paused = False
-        self._is_disconnected = False
+        self.sinfo = sinfo
+        self._should_stop = False
+        self._paused = False
+
         self._buffer = buffer
 
-        self.parsed_frames = 0
-        self._full_frames = 0
+        self._frame = 0
         self._parse_frame_time = 0
 
-        # The body of a force or position packet should contain
+        # The body of an x/v/f packet should contain
         # (4 bytes per float * 3 atoms * n_atoms) bytes
         self.n_atoms = n_atoms
-        self._data_bytes = 12 * n_atoms
+        xvf_bytes = 12 * n_atoms
 
-        self._byte_dict = {}
-        if self.imdsinfo.energies > 0:
-            self._byte_dict["energies"] = bytearray(40)
-        if self.imdsinfo.dimensions > 0:
-            self._byte_dict["dimensions"] = bytearray(36)
-        if self.imdsinfo.positions > 0:
-            self._byte_dict["positions"] = bytearray(self._data_bytes)
-        if self.imdsinfo.velocities > 0:
-            self._byte_dict["velocities"] = bytearray(self._data_bytes)
-        if self.imdsinfo.forces > 0:
-            self._byte_dict["forces"] = bytearray(self._data_bytes)
+        # NOTE: does 0 mean every frame?
+        self._header = bytearray(IMDHEADERSIZE)
+        if self.sinfo.energies > 0:
+            self._energies = bytearray(40)
+        if self.sinfo.dimensions > 0:
+            self._dimensions = bytearray(36)
+        if self.sinfo.positions > 0:
+            self._positions = bytearray(xvf_bytes)
+        if self.sinfo.velocities > 0:
+            self._velocities = bytearray(xvf_bytes)
+        if self.sinfo.forces > 0:
+            self._forces = bytearray(xvf_bytes)
 
-    @abc.abstractmethod
-    def _parse_and_insert_frame(self):
-        pass
-
-    @abc.abstractmethod
-    def _check_end_of_simulation(self):
-        pass
-
-    def _send_go_packet(self):
+    def _go(self):
         """
         Send a go packet to the client to start the simulation
         and begin receiving data.
         """
+        # NOTE: removeme after testing
         print("sending go packet...")
-        go = create_header_bytes(IMDType.IMD_GO, 0)
+        go = create_header_bytes(IMDHeaderType.IMD_GO, 0)
         self._conn.sendall(go)
         logger.debug("IMDProducer: Sent go packet to server")
 
-    def _pause_simulation(self):
+    def _pause(self):
         """
         Block the simulation until the buffer has more space.
         """
+        self._conn.settimeout(0)
+        pause = create_header_bytes(IMDHeaderType.IMD_PAUSE, 0)
         try:
-            pause = create_header_bytes(IMDType.IMD_PAUSE, 0)
             self._conn.sendall(pause)
-            logger.debug(
-                "IMDProducer: Pausing simulation because buffer is almost full"
-            )
-            # make the socket non-blocking so we can use BlockingIOError to check
-            # if we can unpause
-            self._conn.settimeout(0)
-            self.paused = True
         except ConnectionResetError as e:
-            self._is_disconnected = True
-            self.stop()
-            logger.warning(
-                "IMDProducer: Connection reset during pausing, "
-                "data likely lost in frame {}".format(self.parsed_frames)
-            )
+            # NOTE: test to ensure this is the correct error type to except
+            # Simulation has already ended by the time we paused
+            return False
+        return True
 
-    def _unpause_simulation(self):
+    def _unpause(self):
+        self._conn.settimeout(None)
+        unpause = create_header_bytes(IMDHeaderType.IMD_PAUSE, 0)
         try:
-            logger.debug(
-                "IMDProducer: Waiting to unpause until buffer almost empty"
-            )
-            self._buffer.wait_almost_empty()
-            logger.debug("IMDProducer: Unpausing simulation, buffer has space")
-            pause = create_header_bytes(IMDType.IMD_PAUSE, 0)
-            self._conn.sendall(pause)
-            self.paused = False
-            self._conn.settimeout(None)
+            self._conn.sendall(unpause)
         except ConnectionResetError as e:
-            self._is_disconnected = True
-            self.stop()
-            logger.warning(
-                "IMDProducer: Connection reset during unpausing, "
-                "data likely lost in frame {}".format(self.parsed_frames)
-            )
+            # NOTE: test to ensure this is the correct error type to except
+            # This shouldn't ever happen
+            logger.debug("Unpause failed, connection reset")
+            return False
+        return True
 
     def run(self):
-        """
-        Producer thread method. Reads from the socket and
-        sends a 'pause' signal if needed.
-        """
-        self._send_go_packet()
-        self.running = True
-        while self.running:
-            self._parse_and_insert_frame()
+        self._go()
+
+        while not self._should_stop:
+            # NOTE: imdv3 may have a simulation end packet rather than relying on disconnect
+            if sock_disconnected(self._conn):
+                break
+            # NOTE: add timeout
+
+            logger.debug(f"IMDProducer: Attempting to get timestep")
+            ts = self._buffer.get_timestep()
+            # Reader is closed
+            if ts is None:
+                break
+
+            logger.debug(f"IMDProducer: Got timstep")
+
+            # This value is approximate
+            n_empty_ts = self._buffer.get_empty_qsize()
+
+            logger.debug(f"IMDProducer: Got empty qsize")
 
             # If buffer is more than 50% full, pause the simulation
+            if not self._paused and n_empty_ts < self._buffer.capacity // 2:
+                pause_success = self._pause()
+                if not pause_success:
+                    # Don't need to disconnect, pause failed due to simulation end
+                    break
+                self._paused = True
+
+            # If buffer is less than 25% full, unpause the simulation
             if (
-                not self.paused
-                and self._full_frames >= self._buffer.capacity // 2
+                self._paused
+                and sock_empty(self._conn)
+                and n_empty_ts >= self._buffer.capacity // 4
             ):
-                self._pause_simulation()
+                unpause_success = self._unpause()
+                if not unpause_success:
+                    break
+                self._paused = False
 
-            # Simulation will unpause during frame parsing if
-            # 1. buffer is empty
-            # 2. socket is empty
+            logger.debug(f"IMDProducer: Attempting to read nrg and pos")
+            # NOTE: This can be replaced with a simple parser if
+            # the server doesn't send the final frame with all data
+            e_header_success = self._expect_header(
+                IMDHeaderType.IMD_ENERGIES, expected_value=1
+            )
+            if not e_header_success:
+                break
+            logger.debug(f"IMDProducer: Expected header")
 
-            # Only check for simulation end if we're not paused
-            # otherwise we can get a false positive
-            if not self.paused:
-                self._check_end_of_simulation()
+            energies_successs = read_into_buf(self._conn, self._energies)
+            if not energies_successs:
+                break
+
+            logger.debug(f"IMDProducer: Read nrg, reading pos")
+
+            p_header_success = self._expect_header(
+                IMDHeaderType.IMD_FCOORDS, expected_value=self.n_atoms
+            )
+            if not p_header_success:
+                break
+            logger.debug(f"IMDProducer: Expected header")
+            positions_success = read_into_buf(self._conn, self._positions)
+
+            if not positions_success:
+                break
+
+            logger.debug(f"IMDProducer: attempting to load ts")
+
+            ts.frame = self._frame
+            ts.positions = np.frombuffer(
+                self._positions, dtype=f"{self.sinfo.endianness}f4"
+            ).reshape((self.n_atoms, 3))
+
+            logger.debug(f"IMDProducer: ts loaded- inserting it")
+
+            self._buffer.insert(ts)
+
+            logger.debug(f"IMDProducer: ts inserted")
+
+        logger.debug("IMDProducer: break occuurred")
+
+        # Tell reader not to expect more frames to be added
+        self._buffer.notify_producer_finished()
+        # MUST disconnect before stopping run loop
+        # if simulation already ended, this method will do nothing
+        self._disconnect()
 
         return
 
-    def stop(self):
-        # Tell reader not to expect more frames to be added
-        self._buffer.producer_finished = True
-        # MUST disconnect before stopping run loop
-        self._ensure_disconnect()
-        self.running = False
+    def _expect_header(self, expected_type, expected_value=None):
 
-    def _handle_signal(self, signum, frame):
-        """Handle SIGINT and SIGTERM signals."""
-        self.running = False
-        self._ensure_disconnect()
+        recv_success = read_into_buf(self._conn, self._header)
+        logger.debug(f"IMDProducer: recv success: {recv_success}")
+        if not recv_success:
+            return False
 
-    def _recv_data(self, bytearray):
-        """Used to receive headers and data packets from the socket
-        into self._frame_buf at a specified offset.
+        logger.debug(f"IMDProducer: header: {self._header}")
+        header = IMDHeader(self._header)
 
-        This method will behave differently is self.paused is True,
-        since having no more data available in the socket doesn't
-        indicate the connection is closed, but rather that
-        the simulation is now ready to be unpaused
-        """
-        logger.debug(f"IMDProducer: Receiving {len(bytearray)} bytes")
+        logger.debug(f"IMDProducer: header parsed")
 
-        memview = memoryview(bytearray)
-        total_received = 0
-        while total_received < len(bytearray):
-            try:
-                chunk = self._conn.recv(len(bytearray) - total_received)
-                if not chunk:
-                    self._is_disconnected = True
-                    self.stop()
-                    logger.warning(
-                        "IMDProducer: Data likely lost in frame {}".format(
-                            self.parsed_frames
-                        )
-                    )
-                    raise ConnectionError("Socket connection was closed")
-            except BlockingIOError:
-                # If we're paused, we can assume the simulation is ready to unpause
-                if self.paused:
-                    self._unpause_simulation()
-                    continue
-            except Exception as e:
-                logger.error(
-                    f"IMDProducer: Error receiving data: {e}. Stopping producer"
-                )
-            memview[total_received : total_received + len(chunk)] = chunk
-            total_received += len(chunk)
-            logger.debug(
-                f"IMDProducer: Receiving data. Total received: {total_received}"
-            )
+        if header.type != expected_type:
+            return False
 
-    def _expect_header(self, expected_type=None, expected_value=None):
-        """
-        Read a header packet from the socket.
-        """
-        header_bytes = bytearray(IMDHEADERSIZE)
-        self._recv_data(header_bytes)
-        header = parse_header_bytes(header_bytes)
-        if expected_type is not None and header.type != expected_type:
-            self.stop()
-            raise ValueError(
-                f"Expected packet type {expected_type}, got {header.type}"
-            )
-        elif expected_value is not None and header.length != expected_value:
-            self.stop()
-            raise ValueError(
-                f"Expected packet length {expected_value}, got {header.length}"
-            )
-        return header
+        if expected_value is not None and header.length != expected_value:
+            return False
 
-    def _ensure_disconnect(self):
-        """Ensure the connection is closed only once."""
-        # We rely on the server to close the connection
-        # so only disconnect in cases where it isn't the
-        # server's responsibility (stopping mid-simulation)
-        if not self._is_disconnected and self.running:
-            self._disconnect()
-            self._is_disconnected = True
+        return True
 
     def _disconnect(self):
         if self._conn:
             try:
-                disconnect = create_header_bytes(IMDType.IMD_DISCONNECT, 0)
+                disconnect = create_header_bytes(
+                    IMDHeaderType.IMD_DISCONNECT, 0
+                )
                 self._conn.sendall(disconnect)
                 self._conn.close()
                 logger.debug("IMDProducer: Disconnected from server")
+            # NOTE: verify this is the correct error type to except
             except ConnectionResetError:
                 logger.debug(
                     f"IMDProducer: Server already terminated the connection"
                 )
-
-
-class IMDv2Producer(AbstractIMDProducer):
-    """
-    Producer thread for IMDReader. Reads packets from the socket
-    and places them into the shared buffer.
-    """
-
-    def __init__(self, conn, buffer, imdsinfo, n_atoms):
-        super(IMDv2Producer, self).__init__(conn, buffer, imdsinfo, n_atoms)
-        self._data_elements = {"positions", "energies"}
-
-    def _parse_and_insert_frame(self):
-        with timeit() as parse_frame:
-            self._expect_header(
-                expected_type=IMDType.IMD_ENERGIES, expected_value=1
-            )
-            logger.debug("IMDProducer: Received energies packet")
-            self._recv_data(self._byte_dict["energies"])
-            self._expect_header(
-                expected_type=IMDType.IMD_FCOORDS,
-                expected_value=self.n_atoms,
-            )
-            logger.debug("IMDProducer: Received positions packet")
-            self._recv_data(self._byte_dict["positions"])
-            self._full_frames = self._buffer.insert(
-                self._byte_dict, self._data_elements
-            )
-
-        self.parsed_frames += 1
-        # Use the longest parse frame time to calculate
-        # the timeout for the next frame
-        self._parse_frame_time = max(
-            parse_frame.elapsed, self._parse_frame_time
-        )
-        logger.debug(
-            f"IMDProducer: Added frame #{self.parsed_frames - 1} to buffer in {parse_frame.elapsed} seconds"
-        )
-
-    def _check_end_of_simulation(self):
-        # It is the server's reponsibility
-        # to close the connection, but this may not happen in time
-        # for us to check during the last frame
-        # Therefore, use a timeout on a peek to check if the server has closed
-        try:
-            logger.debug(
-                f"IMDProducer: Checking for frame #{self.parsed_frames}"
-            )
-            # Continue reading if socket contains bytes
-            self._conn.settimeout(5 * self._parse_frame_time)
-            b = self._conn.recv(1, socket.MSG_PEEK)
-            # Two cases for ending producer reads from socket
-
-            # case 1: server has closed the connection and we have no more data to read
-            if not b:
-                logger.debug(
-                    "IMDProducer: Assuming simulation is over at frame "
-                    "{} due to closed connection".format(self.parsed_frames - 1)
-                )
-                self.running = False
-                self._buffer.producer_finished = True
-            # case 2: server has not closed the connection and we have no more data to read
-        except socket.timeout:
-            logger.debug(
-                "IMDProducer: Assuming simulation is over at frame "
-                "#{} due to read timeout,".format(self.parsed_frames - 1)
-            )
-            self.running = False
-            self._buffer.producer_finished = True
-
-        self._conn.settimeout(None)
-
-
-class IMDv3Producer(AbstractIMDProducer):
-    def _parse_and_insert_frame(self):
-        with timeit() as parse_frame:
-
-            data_elements = set()
-            if (
-                "energies" in self._byte_dict
-                and (self.parsed_frames + 1 % self.imdsinfo.energies) == 0
-            ):
-                data_elements.add("energies")
-                self._expect_header(
-                    expected_type=IMDType.IMD_ENERGIES, expected_value=1
-                )
-                self._recv_data(self._byte_dict["energies"])
-
-            if (
-                "dimensions" in self._byte_dict
-                and (self.parsed_frames + 1 % self.imdsinfo.dimensions) == 0
-            ):
-                data_elements.add("dimensions")
-                self._expect_header(
-                    expected_type=IMDType.IMD_BOX,
-                )
-
-            if (
-                "positions" in self._byte_dict
-                and (self.parsed_frames + 1 % self.imdsinfo.positions) == 0
-            ):
-                data_elements.add("positions")
-                self._expect_header(
-                    expected_type=IMDType.IMD_FCOORDS,
-                    expected_value=self.n_atoms,
-                )
-                self._recv_data(self._byte_dict["positions"])
-
-            if (
-                "velocities" in self._byte_dict
-                and (self.parsed_frames + 1 % self.imdsinfo.velocities) == 0
-            ):
-                data_elements.add("velocities")
-                self._expect_header(
-                    expected_type=IMDType.IMD_VELS,
-                    expected_value=self.n_atoms,
-                )
-
-            if (
-                "forces" in self._byte_dict
-                and (self.parsed_frames + 1 % self.imdsinfo.forces) == 0
-            ):
-                data_elements.add("forces")
-                self._expect_header(
-                    expected_type=IMDType.IMD_FORCES,
-                    expected_value=self.n_atoms,
-                )
-
-            self._full_frames = self._buffer.insert(
-                self._byte_dict, data_elements
-            )
-
-        self.parsed_frames += 1
-        # Use the longest parse frame time to calculate
-        # the timeout for the next frame
-        self._parse_frame_time = max(
-            parse_frame.elapsed, self._parse_frame_time
-        )
-        logger.debug(
-            f"IMDProducer: Added frame #{self.parsed_frames - 1} to buffer in {parse_frame.elapsed} seconds"
-        )
-
-    def _check_end_of_simulation(self):
-        # Peek for an EOS Header packet
-        header_bytes = self._conn.recv(8, socket.MSG_PEEK)
-        header = parse_header_bytes(header_bytes)
-        if header.type == IMDType.IMD_EOS:
-            logger.debug(
-                "IMDProducer: Received end of simulation packet, stopping producer"
-            )
-            self.running = False
-            self._buffer.producer_finished = True
 
 
 class CircularByteBuf:
@@ -630,67 +471,27 @@ class CircularByteBuf:
     """
 
     # NOTE: Use 1 buffer for pos, vel, force rather than 3
-    def __init__(self, buffer_size, n_atoms, timestep, imdsinfo):
-        self._n_atoms = n_atoms
+    def __init__(self, buffer_size, imdsinfo, ts_class, n_atoms):
         self._buffer_size = buffer_size
+
         # Syncing reader and producer
         self._producer_finished = False
+        self._consumer_finished = False
 
-        self._ts = timestep
+        self._prev_empty_ts = None
+
         self.imdsinfo = imdsinfo
 
-        self._frame_size = 1
-        # framesize is the number of bytes needed to hold 1 simulation frame in the buffer
-        # one byte is used to hold flags for the type of data in the frame
+        self._empty_q = queue.Queue()
+        self._full_q = queue.Queue()
 
-        # Even though every simulation step might not contain all data,
-        # we allocate space for all data in every frame. This is memory-innefficient,
-        # but works for the majority of use cases, so we can optimize later if needed
-        # this could be optimized by creating a timestep buffer, some kind of byte queue,
-        # or a circular buffer with wrapped inserts and reads
-        if self.imdsinfo.energies > 0:
-            self._frame_size += 40
-        if self.imdsinfo.dimensions > 0:
-            self._frame_size += 36
-        if self.imdsinfo.positions > 0:
-            self._frame_size += self._n_atoms * 12
-        if self.imdsinfo.velocities > 0:
-            self._frame_size += self._n_atoms * 12
-        if self.imdsinfo.forces > 0:
-            self._frame_size += self._n_atoms * 12
+        self._full_ts_avail = threading.Condition(threading.Lock())
+        self._empty_ts_avail = threading.Condition(threading.Lock())
 
-        self._ts_buf = bytearray(self._frame_size)
-        self._data_bytes = self._n_atoms * 12
-
-        # offsets for each data element in the frame
-        self._energy_offset = 1
-        self._dim_offset = 41
-        self._pos_offset = 77
-        self._vel_offset = self._pos_offset + (self._data_bytes)
-        self._force_offset = self._vel_offset + (self._data_bytes)
-
-        if self._frame_size > self._buffer_size:
-            raise MemoryError(
-                f"Requested buffer size of {self._buffer_size} "
-                + f"doesn't meet memory requirement of {self._frame_size}"
-            )
-
-        self._buf_frames = (self._buffer_size) // self._frame_size
-        self._buf = bytearray(self._buf_frames * self._frame_size)
-        self._memview = memoryview(self._buf)
-
-        self._mutex = threading.Lock()
-        self._not_empty = threading.Condition(self._mutex)
-        self._not_full = threading.Condition(self._mutex)
-
-        # _empty refers to the number of empty
-        # "frames" in the buffer
-        # where a frame refers to space in a numpy array
-        # for a full ts frame of positions
-        self._empty = self._buf_frames
-        self._full = 0
-        self._fill = 0
-        self._use = 0
+        # NOTE: hardcoded for testing
+        self._total_ts = 100
+        for i in range(100):
+            self._empty_q.put(ts_class(n_atoms, positions=True))
 
         # Timing for analysis
         self._t1 = None
@@ -700,68 +501,27 @@ class CircularByteBuf:
 
         self._frame = 0
 
-    def insert(self, byte_dict, data_elements):
-        """byte_dict is a dictionary of bytearrays
-        where the keys are the names of the data elements
-        and the values are the bytearrays of the data elements for that frame
+    def get_empty_qsize(self):
+        return self._empty_q.qsize()
 
-        data_elements is a set of the names of the data elements that are present in the frame
-        """
-        with self._not_full:
-            while not self._empty:
-                self._not_full.wait()
+    def get_timestep(self):
+        with self._empty_ts_avail:
+            while self._empty_q.qsize() == 0 and not self._consumer_finished:
+                self._empty_ts_avail.wait()
 
-            flags = 0
-            self._memview[self._fill] = flags
-            self._fill += 1
-            if "energies" in data_elements:
-                self._memview[
-                    self._fill : self._fill + IMDENERGYPACKETLENGTH
-                ] = byte_dict["energies"][:]
-                self._fill += IMDENERGYPACKETLENGTH
-                flags |= 1 << 4
+            if self._consumer_finished:
+                return None
 
-            if "dimensions" in data_elements:
-                self._memview[self._fill : self._fill + 36] = byte_dict[
-                    "dimensions"
-                ][:]
-                self._fill += 36
-                flags |= 1 << 3
+            ts = self._empty_q.get()
+        return ts
 
-            if "positions" in data_elements:
-                self._memview[self._fill : self._fill + self._data_bytes] = (
-                    byte_dict["positions"][:]
-                )
-                self._fill += self._data_bytes
-                flags |= 1 << 2
-
-            if "velocities" in data_elements:
-                self._memview[self._fill : self._fill + self._data_bytes] = (
-                    byte_dict["velocities"][:]
-                )
-                self._fill += self._data_bytes
-                flags |= 1 << 1
-
-            if "forces" in data_elements:
-                self._memview[self._fill : self._fill + self._data_bytes] = (
-                    byte_dict["forces"][:]
-                )
-                self._fill += self._data_bytes
-                flags |= 1
-
-            self._fill %= len(self._buf)
-
-            self._full += 1
-            self._empty -= 1
-            self._not_empty.notify()
-
-            logger.debug(
-                f"IMDProducer: Buffer at ({self._full}/{self._buf_frames}) frames"
-            )
-        # This doesn't need to be a perfect count
-        return self._full
+    def insert(self, ts):
+        self._full_q.put(ts)
+        with self._full_ts_avail:
+            self._full_ts_avail.notify()
 
     def consume_next_timestep(self):
+        """Put empty_ts in the empty_q and get the next full timestep"""
         # Start timer- one frame of analysis is starting (including removal
         # from buffer)
 
@@ -775,92 +535,37 @@ class CircularByteBuf:
 
         self._frame += 1
 
-        with self._not_empty:
-            while not self._full and not self.producer_finished:
-                self._not_empty.wait()
+        # Return the processed timestep
+        if self._prev_empty_ts is not None:
+            self._empty_q.put(self._prev_empty_ts)
+            with self._empty_ts_avail:
+                self._empty_ts_avail.notify()
+
+        # Get the next timestep
+        with self._full_ts_avail:
+            while self._full_q.qsize() == 0 and not self._producer_finished:
+                self._full_ts_avail.wait()
 
             # Buffer is responsible for stopping iteration
-            if self.producer_finished and not self._full:
-                raise IOError from None
+            if self._producer_finished and self._full_q.qsize() == 0:
+                raise StopIteration from None
 
-            # quickly unload memory to free mutex and later parse
-            self._ts_buf[:] = self._memview[
-                self._use : self._use + self._frame_size
-            ]
-            self._use = (self._use + self._frame_size) % len(self._buf)
+            ts = self._full_q.get()
 
-            self._full -= 1
-            self._empty += 1
-            self._not_full.notify()
+        self._prev_empty_ts = ts
 
-        flags = self._ts_buf[0]
+        return ts
 
-        if flags >> 4 & 1:
-            self._ts.data["step"] = np.frombuffer(
-                self._ts_buf,
-                dtype=f"{self.imdinfo.endianness}i4",
-                offset=self._energy_offset,
-            )[0]
-            energydata = (
-                "temperature",
-                "total_energy",
-                "potential_energy",
-                "van_der_walls_energy",
-                "coulomb_energy",
-                "bonds_energy",
-                "angles_energy",
-                "dihedrals_energy",
-                "improper_dihedrals_energy",
-            )
-            for i, name in enumerate(energydata):
-                self._ts.data[name] = np.frombuffer(
-                    self._ts_buf,
-                    dtype=f"{self.imdinfo.endianness}f4",
-                    offset=(self._energy_offset + 4 + (i * 4)),
-                    count=1,
-                )[0]
+    def notify_producer_finished(self):
+        self._producer_finished = True
+        with self._full_ts_avail:
+            self._full_ts_avail.notify()
 
-        if flags >> 3 & 1:
-            dim = np.frombuffer(
-                self._ts_buf, dtype=f"{self._end}f4", offset=self._dim_offset
-            ).reshape((3, 3))
-            self._ts.dimensions = core.triclinic_box(*dim)
-        else:
-            self._ts.dimensions = None
-
-        if flags >> 2 & 1:
-            self._ts.positions = np.frombuffer(
-                self._ts_buf, dtype=f"{self._end}f4", offset=self._pos_offset
-            ).reshape((self._n_atoms, 3))
-        else:
-            self._ts.has_positions = False
-
-        if flags >> 1 & 1:
-            self._ts.velocities = np.frombuffer(
-                self._ts_buf, dtype=f"{self._end}f4", offset=self._vel_offset
-            ).reshape((self._n_atoms, 3))
-        else:
-            self._ts.has_velocities = False
-
-        if flags & 1:
-            self._ts.forces = np.frombuffer(
-                self._ts_buf, dtype=f"{self._end}f4", offset=self._force_offset
-            ).reshape((self._n_atoms, 3))
-        else:
-            self._ts.has_forces = False
-
-    def wait_almost_empty(self):
-        with self._not_full:
-            while self._full >= 1:
-                self._not_full.wait()
-
-            logger.debug(
-                "IMDProducer: Buffer almost empty, resuming simulation"
-            )
-
-    @property
-    def capacity(self):
-        return self._buf_frames
+    def notify_consumer_finished(self):
+        self._consumer_finished = True
+        with self._empty_ts_avail:
+            # noop if producer isn't waiting
+            self._empty_ts_avail.notify()
 
     @property
     def analyze_frame_time(self):
@@ -870,16 +575,5 @@ class CircularByteBuf:
             return None
 
     @property
-    def producer_finished(self):
-        return self._producer_finished
-
-    @producer_finished.setter
-    def producer_finished(self, value):
-        if value:
-            # Only producer should call this
-            # Wake up the reader if it's waiting for more frames
-            with self._not_full:
-                self._producer_finished = True
-                self._not_empty.notify()
-        else:
-            raise ValueError("Cannot unset producer_finished")
+    def capacity(self):
+        return self._total_ts

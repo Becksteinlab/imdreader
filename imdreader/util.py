@@ -41,6 +41,8 @@ class timeit(object):
         return False
 
 
+# NOTE: modify this so that it can accept "http://localhost:8888" strings
+# think of other edge cases as well- should be robust
 def parse_host_port(filename):
     # Check if the format is correct
     parts = filename.split(":")

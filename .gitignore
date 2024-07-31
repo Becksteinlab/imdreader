@@ -107,3 +107,7 @@ ENV/
 
 # poetry
 poetry.lock
+
+# debugging
+
+tmp

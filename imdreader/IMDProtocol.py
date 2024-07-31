@@ -25,7 +25,7 @@ IMDBOXPACKETLENGTH = 36
 IMDVERSIONS = {2, 3}
 
 
-class IMDType(Enum):
+class IMDHeaderType(Enum):
     IMD_DISCONNECT = 0
     IMD_ENERGIES = 1
     IMD_FCOORDS = 2
@@ -46,9 +46,51 @@ class IMDType(Enum):
 class IMDHeader:
     """Convenience class to represent the header of an IMD packet"""
 
-    def __init__(self, msg_type: IMDType, length: int):
-        self.type = msg_type
+    def __init__(self, data):
+        msg_type, length = struct.unpack("!ii", data)
+        h_type = IMDHeaderType(msg_type)
+
+        self.type = h_type
         self.length = length
+
+
+def read_into_buf(sock, buf) -> bool:
+    """Receives len(buf) bytes into buf from the socket sock"""
+    view = memoryview(buf)
+    total_received = 0
+    while total_received < len(view):
+        # NOTE: if timeout is 0, what happens?
+        # This should return None in this case
+        received = sock.recv_into(view[total_received:])
+        if received == 0:
+            return False
+        total_received += received
+    return True
+
+
+# NOTE: problematic. reads a byte when it shouldn't
+def sock_empty(sock) -> bool:
+    """Checks if a socket is connected but empty"""
+    # NOTE: verify this is the correct way to check if a socket is empty
+    try:
+        sock.recv(1, socket.MSG_DONTWAIT)
+        return False
+    except BlockingIOError:
+        return True
+
+
+# NOTE: problematic. reads a byte when it shouldn't
+def sock_disconnected(sock) -> bool:
+    """Checks if a socket is empty"""
+    # NOTE: verify this is the correct way to check if a socket is disconnected
+    try:
+        data = sock.recv(1, socket.MSG_DONTWAIT)
+        if data == b"":
+            return True
+        else:
+            return False
+    except BlockingIOError:
+        return False
 
 
 @dataclass
@@ -77,14 +119,20 @@ class IMDSessionInfo:
     forces: int
 
 
-def create_header_bytes(msg_type: IMDType, length: int):
+def parse_imdv3_session_info(sock, end) -> Union[IMDSessionInfo, None]:
+    """Parses the session information packet of an IMD v3 connection"""
+    pass
+
+
+def create_header_bytes(msg_type: IMDHeaderType, length: int):
     # NOTE: add error checking for invalid packet msg_type here
+
     type = msg_type.value
     return struct.pack("!ii", type, length)
 
 
 def parse_header_bytes(data):
     msg_type, length = struct.unpack("!ii", data)
-    type = IMDType(msg_type)
+    type = IMDHeaderType(msg_type)
     # NOTE: add error checking for invalid packet msg_type here
     return IMDHeader(type, length)
