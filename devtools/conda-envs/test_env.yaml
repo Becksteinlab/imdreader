@@ -21,7 +21,7 @@ dependencies:
   - MDAnalysisTests>=2.7.0
 
   # gromacs
-  - gromacs==2023.4
+  - gromacs==2024.2
 
   # Pip-only installs
   #- pip:
