@@ -123,7 +123,7 @@ class IMDReader(ReaderBase):
             imdsinfo = self._await_IMD_handshake(conn)
 
             if imdsinfo.version == 2:
-                self._buffer = CircularByteBuf(
+                self._buffer = TimestepBuffer(
                     self._buffer_size, imdsinfo, self._Timestep, self.n_atoms
                 )
                 self._producer = IMDProducer(
@@ -141,7 +141,6 @@ class IMDReader(ReaderBase):
 
         self._ts = self._buffer.consume_next_timestep()
 
-        logger.debug(f"self._ts.positions: {self._ts.positions}")
         # Must set frame after read occurs successfully
         # Since buffer raises IO error
         # after producer is finished and there are no more frames
@@ -169,7 +168,6 @@ class IMDReader(ReaderBase):
             raise ConnectionRefusedError(
                 f"IMDReader: Connection to {self._host}:{self._port} refused"
             )
-        conn.settimeout(None)
         return conn
 
     def _await_IMD_handshake(self, conn) -> IMDSessionInfo:
@@ -278,6 +276,11 @@ class IMDProducer(threading.Thread):
         self._should_stop = False
         self._paused = False
 
+        # Timeout for first frame should be longer
+        # than rest of frames
+        self._timeout = 5
+        self._conn.settimeout(self._timeout)
+
         self._buffer = buffer
 
         self._frame = 0
@@ -316,37 +319,39 @@ class IMDProducer(threading.Thread):
         """
         Block the simulation until the buffer has more space.
         """
-        self._conn.settimeout(0)
+        logger.debug(
+            "IMDProducer: Pausing simulation because buffer is almost full"
+        )
         pause = create_header_bytes(IMDHeaderType.IMD_PAUSE, 0)
         try:
             self._conn.sendall(pause)
         except ConnectionResetError as e:
-            # NOTE: test to ensure this is the correct error type to except
             # Simulation has already ended by the time we paused
             return False
+        # Edge case: pause occured in the time between server sends its last frame
+        # and closing socket
+        # Simulation is not actually paused but is over, but we still want to read remaining data
+        # from the socket
         return True
 
     def _unpause(self):
-        self._conn.settimeout(None)
+        logger.debug("IMDProducer: Unpausing simulation, buffer has space")
         unpause = create_header_bytes(IMDHeaderType.IMD_PAUSE, 0)
         try:
             self._conn.sendall(unpause)
         except ConnectionResetError as e:
-            # NOTE: test to ensure this is the correct error type to except
-            # This shouldn't ever happen
-            logger.debug("Unpause failed, connection reset")
+            # Edge case: pause occured in the time between server sends its last frame
+            # and closing socket
+            # Simulation was never actually paused in this case and is now over
             return False
+        # Edge case: pause & unpause occured in the time between server sends its last frame and closing socket
+        # in this case, the simulation isn't actually unpaused but over
         return True
 
     def run(self):
         self._go()
 
         while not self._should_stop:
-            # NOTE: imdv3 may have a simulation end packet rather than relying on disconnect
-            if sock_disconnected(self._conn):
-                break
-            # NOTE: add timeout
-
             logger.debug(f"IMDProducer: Attempting to get timestep")
             ts = self._buffer.get_timestep()
             # Reader is closed
@@ -362,22 +367,16 @@ class IMDProducer(threading.Thread):
 
             # If buffer is more than 50% full, pause the simulation
             if not self._paused and n_empty_ts < self._buffer.capacity // 2:
+                # if pause succeeds, simulation may still have ended
                 pause_success = self._pause()
-                if not pause_success:
-                    # Don't need to disconnect, pause failed due to simulation end
-                    break
-                self._paused = True
+                if pause_success:
+                    self._paused = True
 
             # If buffer is less than 25% full, unpause the simulation
-            if (
-                self._paused
-                and sock_empty(self._conn)
-                and n_empty_ts >= self._buffer.capacity // 4
-            ):
+            if self._paused and n_empty_ts >= self._buffer.capacity // 4:
                 unpause_success = self._unpause()
-                if not unpause_success:
-                    break
-                self._paused = False
+                if unpause_success:
+                    self._paused = False
 
             logger.debug(f"IMDProducer: Attempting to read nrg and pos")
             # NOTE: This can be replaced with a simple parser if
@@ -419,6 +418,11 @@ class IMDProducer(threading.Thread):
 
             logger.debug(f"IMDProducer: ts inserted")
 
+            if self._frame == 0:
+                self._conn.settimeout(1)
+
+            self._frame += 1
+
         logger.debug("IMDProducer: break occuurred")
 
         # Tell reader not to expect more frames to be added
@@ -450,22 +454,19 @@ class IMDProducer(threading.Thread):
         return True
 
     def _disconnect(self):
-        if self._conn:
-            try:
-                disconnect = create_header_bytes(
-                    IMDHeaderType.IMD_DISCONNECT, 0
-                )
-                self._conn.sendall(disconnect)
-                self._conn.close()
-                logger.debug("IMDProducer: Disconnected from server")
-            # NOTE: verify this is the correct error type to except
-            except ConnectionResetError:
-                logger.debug(
-                    f"IMDProducer: Server already terminated the connection"
-                )
+        try:
+            disconnect = create_header_bytes(IMDHeaderType.IMD_DISCONNECT, 0)
+            self._conn.sendall(disconnect)
+            logger.debug("IMDProducer: Disconnected from server")
+        except ConnectionResetError:
+            logger.debug(
+                f"IMDProducer: Attempted to disconnect but server already terminated the connection"
+            )
+        finally:
+            self._conn.close()
 
 
-class CircularByteBuf:
+class TimestepBuffer:
     """
     Acts as interface between producer and consumer threads
     """
@@ -489,8 +490,8 @@ class CircularByteBuf:
         self._empty_ts_avail = threading.Condition(threading.Lock())
 
         # NOTE: hardcoded for testing
-        self._total_ts = 100
-        for i in range(100):
+        self._total_ts = 101
+        for i in range(101):
             self._empty_q.put(ts_class(n_atoms, positions=True))
 
         # Timing for analysis
@@ -577,3 +578,24 @@ class CircularByteBuf:
     @property
     def capacity(self):
         return self._total_ts
+
+
+def read_into_buf(sock, buf) -> bool:
+    """Receives len(buf) bytes into buf from the socket sock"""
+    view = memoryview(buf)
+    total_received = 0
+    while total_received < len(view):
+        try:
+            received = sock.recv_into(view[total_received:])
+            if received == 0:
+                # Server called close()
+                logger.debug(
+                    "IMDProducer: recv returning false due to server calling close()"
+                )
+                return False
+        except TimeoutError:
+            # Server is *likely* done sending frames
+            logger.debug("IMDProducer: recv returning false due to timeout")
+            return False
+        total_received += received
+    return True

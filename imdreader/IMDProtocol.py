@@ -1,3 +1,4 @@
+import select
 import socket
 import struct
 import logging
@@ -52,45 +53,6 @@ class IMDHeader:
 
         self.type = h_type
         self.length = length
-
-
-def read_into_buf(sock, buf) -> bool:
-    """Receives len(buf) bytes into buf from the socket sock"""
-    view = memoryview(buf)
-    total_received = 0
-    while total_received < len(view):
-        # NOTE: if timeout is 0, what happens?
-        # This should return None in this case
-        received = sock.recv_into(view[total_received:])
-        if received == 0:
-            return False
-        total_received += received
-    return True
-
-
-# NOTE: problematic. reads a byte when it shouldn't
-def sock_empty(sock) -> bool:
-    """Checks if a socket is connected but empty"""
-    # NOTE: verify this is the correct way to check if a socket is empty
-    try:
-        sock.recv(1, socket.MSG_DONTWAIT)
-        return False
-    except BlockingIOError:
-        return True
-
-
-# NOTE: problematic. reads a byte when it shouldn't
-def sock_disconnected(sock) -> bool:
-    """Checks if a socket is empty"""
-    # NOTE: verify this is the correct way to check if a socket is disconnected
-    try:
-        data = sock.recv(1, socket.MSG_DONTWAIT)
-        if data == b"":
-            return True
-        else:
-            return False
-    except BlockingIOError:
-        return False
 
 
 @dataclass
