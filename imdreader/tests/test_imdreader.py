@@ -1,4 +1,8 @@
-from MDAnalysisTests.datafiles import COORDINATES_TOPOLOGY, COORDINATES_TRR
+from MDAnalysisTests.datafiles import (
+    COORDINATES_TOPOLOGY,
+    COORDINATES_TRR,
+    COORDINATES_H5MD,
+)
 import MDAnalysis as mda
 import imdreader
 from imdreader.IMDClient import imdframe_memsize
@@ -58,13 +62,13 @@ class TestIMDReaderV2:
     @pytest.fixture
     def traj(self):
         return mda.coordinates.TRR.TRRReader(
-            COORDINATES_TRR, convert_units=False
+            COORDINATES_H5MD, convert_units=False
         )
 
     @pytest.fixture
     def ref(self):
         return mda.coordinates.TRR.TRRReader(
-            COORDINATES_TRR, convert_units=True
+            COORDINATES_H5MD, convert_units=True
         )
 
     @pytest.fixture

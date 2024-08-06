@@ -100,7 +100,9 @@ class IMDReader(ReaderBase):
             number of atoms in the system. defaults to number of atoms
             in the topology. don't set this unless you know what you're doing.
         """
-        self._producer = None
+        self._init_scope = True
+        self._reopen_called = False
+
         super(IMDReader, self).__init__(filename, **kwargs)
 
         logger.debug("Reader initializing")
@@ -133,8 +135,7 @@ class IMDReader(ReaderBase):
         )
 
         self._frame = -1
-        self._init_scope = True
-        self._reopen_called = False
+
         self._read_next_timestep()
 
     def _read_next_timestep(self):
