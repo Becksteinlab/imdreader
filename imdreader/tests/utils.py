@@ -29,7 +29,7 @@ class DefaultConnectionBehavior(Behavior):
     def perform(self, host, port, event_q):
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.bind((host, port))
-        s.listen(60)
+        s.listen(120)
         conn, addr = s.accept()
         return (conn, addr)
 

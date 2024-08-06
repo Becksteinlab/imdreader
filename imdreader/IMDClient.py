@@ -61,7 +61,7 @@ class IMDClient:
             conn.setsockopt(
                 socket.SOL_SOCKET, socket.SO_RCVBUF, self._socket_bufsize
             )
-        conn.settimeout(5)
+        conn.settimeout(60)
         try:
             conn.connect((host, port))
         except ConnectionRefusedError:
