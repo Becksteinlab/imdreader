@@ -2,8 +2,7 @@
 IMDReader
 """
 
-from .IMDProtocol import *
-from .IMDREADER import *
+from .IMDREADER import IMDReader
 from importlib.metadata import version
 
 

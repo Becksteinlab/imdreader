@@ -57,3 +57,22 @@ def parse_host_port(filename):
     else:
         # Handle the case where the format does not match "host:port"
         raise ValueError("Filename must be in the format 'host:port'")
+
+
+def approximate_timestep_memsize(
+    n_atoms, energies, dimensions, positions, velocities, forces
+):
+    total_size = 0
+
+    if energies:
+        total_size += 36
+
+    if dimensions:
+        # dimensions in the form (*A*, *B*, *C*, *alpha*, *beta*, *gamma*)
+        total_size += 24
+
+    for dset in (positions, velocities, forces):
+        if dset:
+            total_size += n_atoms * 12
+
+    return total_size

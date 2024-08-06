@@ -143,6 +143,8 @@ def run_gmx(tmpdir):
 
 
 def test_traj_len(run_gmx):
+    logger = logging.getLogger("imdreader.IMDREADER")
+    logger.debug("test_traj_len")
     port = run_gmx
     recvuntil(
         "gmx_output.log",
@@ -158,64 +160,3 @@ def test_traj_len(run_gmx):
         pass
 
     assert len(u2.trajectory) == len(u.trajectory)
-
-
-def test_pause(run_gmx, caplog):
-    port = run_gmx
-    recvuntil(
-        "gmx_output.log",
-        "IMD: Will wait until I have a connection and IMD_GO orders.",
-        60,
-    )
-    u2 = mda.Universe(IMDGROUP_GRO, OUT_TRR)
-    u = mda.Universe(
-        IMDGROUP_GRO,
-        f"localhost:{port}",
-        # 1240 bytes per frame
-        buffer_size=62000,
-    )
-    i = 0
-    for ts in u.trajectory:
-        time.sleep(0.05)
-        assert_timestep_almost_equal(ts, u2.trajectory[i], decimal=5)
-        i += 1
-
-    assert len(u.trajectory) == 101
-    assert (
-        "IMDProducer: Pausing simulation because buffer is almost full"
-        in caplog.text
-    )
-    assert "IMDProducer: Unpausing simulation, buffer has space" in caplog.text
-    assert "data likely lost in frame" not in caplog.text
-
-
-def test_no_connection(caplog):
-    u = mda.Universe(
-        IMDGROUP_GRO,
-        "localhost:8888",
-        buffer_size=62000,
-    )
-    for ts in u.trajectory:
-        with pytest.raises(ConnectionRefusedError):
-            pass
-    # NOTE: assert this in output: No connection received. Pausing simulation.
-    assert "IMDReader: Connection to localhost:8888 refused" in caplog.text
-
-
-"""
-import socket
-import struct
-
-conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-
-def connect():
-    conn.connect(("localhost",8888))
-    conn.recv(8)
-    go = struct.pack("!ii", 3, 0)
-    conn.sendall(go)
-
-def pause():
-    pause = struct.pack("!ii", 7, 0)
-    conn.sendall(pause)
-
-"""

@@ -1,12 +1,8 @@
-import select
-import socket
 import struct
 import logging
 from enum import Enum, auto
 from typing import Union
 from dataclasses import dataclass
-import abc
-import threading
 
 """
 IMD Packets have an 8 byte header and a variable length payload 
@@ -24,6 +20,7 @@ IMDHEADERSIZE = 8
 IMDENERGYPACKETLENGTH = 40
 IMDBOXPACKETLENGTH = 36
 IMDVERSIONS = {2, 3}
+IMDAWAITGOTIME = 1
 
 
 class IMDHeaderType(Enum):
@@ -38,10 +35,55 @@ class IMDHeaderType(Enum):
     IMD_TRATE = 8
     IMD_IOERROR = 9
     # New in IMD v3
-    IMD_BOX = 10
-    IMD_VELS = 11
-    IMD_FORCES = 12
-    IMD_EOS = 13
+    # IMD_BOX = 10
+    # IMD_VELS = 11
+    # IMD_FORCES = 12
+    # IMD_EOS = 13
+
+
+def parse_energy_bytes(data, endianness):
+    keys = [
+        "step",
+        "temperature",
+        "total_energy",
+        "potential_energy",
+        "van_der_walls_energy",
+        "coulomb_energy",
+        "bonds_energy",
+        "angles_energy",
+        "dihedrals_energy",
+        "improper_dihedrals_energy",
+    ]
+    values = struct.unpack(f"{endianness}ifffffffff", data)
+    return dict(zip(keys, values))
+
+
+def create_energy_bytes(
+    step,
+    temperature,
+    total_energy,
+    potential_energy,
+    van_der_walls_energy,
+    coulomb_energy,
+    bonds_energy,
+    angles_energy,
+    dihedrals_energy,
+    improper_dihedrals_energy,
+    endianness,
+):
+    return struct.pack(
+        f"{endianness}ifffffffff",
+        step,
+        temperature,
+        total_energy,
+        potential_energy,
+        van_der_walls_energy,
+        coulomb_energy,
+        bonds_energy,
+        angles_energy,
+        dihedrals_energy,
+        improper_dihedrals_energy,
+    )
 
 
 class IMDHeader:

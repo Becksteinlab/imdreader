@@ -5,114 +5,230 @@ import socket
 import threading
 import time
 from imdreader.IMDProtocol import *
-from imdreader.IMDREADER import read_into_buf
+from imdreader.IMDREADER import read_into_buf, sock_contains_data
 from MDAnalysisTests.datafiles import COORDINATES_TOPOLOGY, COORDINATES_TRR
+import abc
+import imdreader
+import logging
+
+logger = logging.getLogger(imdreader.IMDClient.__name__)
 
 
 class Behavior(abc.ABC):
+    """Abstract base class for behaviors for the DummyIMDServer to perform.
+    Ensure that behaviors do not contain potentially infinite loops- they should be
+    testing for a specific sequence of events"""
+
     @abc.abstractmethod
-    def perform(self):
+    def perform(self, *args, **kwargs):
         pass
 
 
 class DefaultConnectionBehavior(Behavior):
-    def __init__(self, host, port):
-        self.host = host
-        self.port = port
 
-    def perform(self):
+    def perform(self, host, port, event_q):
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.bind((self.host, self.port))
+        s.bind((host, port))
         s.listen(60)
         conn, addr = s.accept()
         return (conn, addr)
 
 
 class DefaultHandshakeV2Behavior(Behavior):
-    def __init__(self, imdsessioninfo):
-        self.version = imdsessioninfo.version
-        self.endianness = imdsessioninfo.endianness
-
-    def perform(self, conn):
+    def perform(self, conn, imdsessioninfo, event_q):
         header = struct.pack("!i", IMDHeaderType.IMD_HANDSHAKE.value)
-        if self.endianness == "<":
-            header += struct.pack("<i", self.version)
+        if imdsessioninfo.endianness == "<":
+            header += struct.pack("<i", 2)
         else:
-            header += struct.pack(">i", self.version)
+            header += struct.pack(">i", 2)
         conn.sendall(header)
 
 
 class DefaultHandshakeV3Behavior(Behavior):
-    def __init__(self, imdsessioninfo):
-        pass
-
-    def perform(self, conn):
+    def perform(self, conn, imdsessioninfo, event_q):
         pass
 
 
 class DefaultAwaitGoBehavior(Behavior):
-    def __init__(self, timeout=1):
-        self.timeout = timeout
-
-    def perform(self, conn):
-        conn.settimeout(self.timeout)
+    def perform(self, conn, event_q):
+        conn.settimeout(IMDAWAITGOTIME)
         head_buf = bytearray(IMDHEADERSIZE)
         read_into_buf(conn, head_buf)
         header = IMDHeader(head_buf)
         if header.type != IMDHeaderType.IMD_GO:
             raise ValueError("Expected IMD_GO packet, got something else")
-        conn.settimeout(None)
+        logger.debug("DummyIMDServer: Received IMD_GO")
 
 
-class DefaultLoopBehaviorV2(Behavior):
-    def __init__(self, trajectory, imdsessioninfo):
-        self.traj = trajectory
-        self.endianness = imdsessioninfo.endianness
-        self.imdterm = imdsessioninfo.imdterm
-        self.imdwait = imdsessioninfo.imdwait
-        self.imdpull = imdsessioninfo.imdpull
+class DefaultLoopV2Behavior(Behavior):
+    """Default behavior doesn't allow pausing"""
 
-    def perform(self, conn):
+    def perform(self, conn, traj, imdsessioninfo, event_q):
         conn.settimeout(1)
         headerbuf = bytearray(IMDHEADERSIZE)
         paused = False
 
-        energies = np.zeros((len(self.traj), 10), dtype=np.float32)
+        logger.debug("DummyIMDServer: Starting loop")
 
-        for i in range(len(self.traj)):
-            while sock_contains_data(conn, 1) or paused:
-                header_success = read_into_buf(conn, headerbuf)
-                if header_success:
-                    header = IMDHeader(headerbuf)
-                    if header.type == IMDHeaderType.IMD_PAUSE:
-                        paused = not paused
+        for i in range(len(traj)):
+            logger.debug(f"DummyIMDServer: generating frame {i}")
 
             energy_header = create_header_bytes(IMDHeaderType.IMD_ENERGIES, 1)
-            energy = np.ascontiguousarray(
-                energies[i], dtype=f"{self.endianness}f4"
-            ).tobytes()
+
+            energies = create_energy_bytes(
+                i,
+                i + 1,
+                i + 2,
+                i + 3,
+                i + 4,
+                i + 5,
+                i + 6,
+                i + 7,
+                i + 8,
+                i + 9,
+                imdsessioninfo.endianness,
+            )
+
             pos_header = create_header_bytes(
-                IMDHeaderType.IMD_FCOORDS, self.traj.n_atoms
+                IMDHeaderType.IMD_FCOORDS, traj.n_atoms
             )
             pos = np.ascontiguousarray(
-                self.traj[i].positions, dtype=f"{self.endianness}f4"
+                traj[i].positions, dtype=f"{imdsessioninfo.endianness}f"
             ).tobytes()
 
-            conn.sendall(energy_header + energy)
+            conn.sendall(energy_header + energies)
             conn.sendall(pos_header + pos)
+            logger.debug(f"Sent frame {i}")
+
+
+class ExpectPauseLoopV2Behavior(DefaultLoopV2Behavior):
+    """Waits for a pause & unpause in all frames after the first frame."""
+
+    def perform(self, conn, traj, imdsessioninfo, event_q):
+        conn.settimeout(10)
+        headerbuf = bytearray(IMDHEADERSIZE)
+
+        logger.debug("DummyIMDServer: Starting loop")
+
+        for i in range(len(traj)):
+            if i != 0:
+                read_into_buf(conn, headerbuf)
+                header = IMDHeader(headerbuf)
+                if header.type != IMDHeaderType.IMD_PAUSE:
+                    logger.debug(
+                        f"DummyIMDServer: Expected IMD_PAUSE, got {header.type}"
+                    )
+
+                read_into_buf(conn, headerbuf)
+                header = IMDHeader(headerbuf)
+                if header.type != IMDHeaderType.IMD_PAUSE:
+                    logger.debug(
+                        f"DummyIMDServer: Expected IMD_PAUSE, got {header.type}"
+                    )
+
+            logger.debug(f"DummyIMDServer: generating frame {i}")
+
+            energy_header = create_header_bytes(IMDHeaderType.IMD_ENERGIES, 1)
+
+            energies = create_energy_bytes(
+                i,
+                i + 1,
+                i + 2,
+                i + 3,
+                i + 4,
+                i + 5,
+                i + 6,
+                i + 7,
+                i + 8,
+                i + 9,
+                imdsessioninfo.endianness,
+            )
+
+            pos_header = create_header_bytes(
+                IMDHeaderType.IMD_FCOORDS, traj.n_atoms
+            )
+            pos = np.ascontiguousarray(
+                traj[i].positions, dtype=f"{imdsessioninfo.endianness}f"
+            ).tobytes()
+
+            conn.sendall(energy_header + energies)
+            conn.sendall(pos_header + pos)
+            logger.debug(f"Sent frame {i}")
+
+
+class ExpectPauseUnpauseAfterLoopV2Behavior(DefaultLoopV2Behavior):
+    def perform(self, conn, traj, imdsessioninfo, event_q):
+        conn.settimeout(10)
+        headerbuf = bytearray(IMDHEADERSIZE)
+
+        logger.debug("DummyIMDServer: Starting loop")
+
+        for i in range(len(traj)):
+            logger.debug(f"DummyIMDServer: generating frame {i}")
+
+            energy_header = create_header_bytes(IMDHeaderType.IMD_ENERGIES, 1)
+
+            energies = create_energy_bytes(
+                i,
+                i + 1,
+                i + 2,
+                i + 3,
+                i + 4,
+                i + 5,
+                i + 6,
+                i + 7,
+                i + 8,
+                i + 9,
+                imdsessioninfo.endianness,
+            )
+
+            pos_header = create_header_bytes(
+                IMDHeaderType.IMD_FCOORDS, traj.n_atoms
+            )
+            pos = np.ascontiguousarray(
+                traj[i].positions, dtype=f"{imdsessioninfo.endianness}f"
+            ).tobytes()
+
+            conn.sendall(energy_header + energies)
+            conn.sendall(pos_header + pos)
+            logger.debug(f"Sent frame {i}")
+
+        read_into_buf(conn, headerbuf)
+        header = IMDHeader(headerbuf)
+        if header.type != IMDHeaderType.IMD_PAUSE:
+            logger.debug(
+                f"DummyIMDServer: Expected IMD_PAUSE, got {header.type}"
+            )
+
+        read_into_buf(conn, headerbuf)
+        header = IMDHeader(headerbuf)
+        if header.type != IMDHeaderType.IMD_PAUSE:
+            logger.debug(
+                f"DummyIMDServer: Expected IMD_PAUSE, got {header.type}"
+            )
 
 
 class DefaultDisconnectBehavior(Behavior):
-    def __init__(self, pre_shutdown_wait=0, pre_close_wait=0):
-        self.pre_shutdown_wait = pre_shutdown_wait
-        self.pre_close_wait = pre_close_wait
-
-    def perform(self, conn):
-        time.sleep(self.pre_shutdown_wait)
+    def perform(self, conn, event_q):
         # Gromacs uses the c equivalent of the SHUT_WR flag
         conn.shutdown(socket.SHUT_WR)
-        time.sleep(self.pre_close_wait)
         conn.close()
+
+
+def create_default_imdsinfo_v2():
+    return IMDSessionInfo(
+        version=2,
+        endianness="<",
+        imdterm=None,
+        imdwait=None,
+        imdpull=None,
+        wrapped_coords=True,
+        energies=1,
+        dimensions=0,
+        positions=1,
+        velocities=0,
+        forces=0,
+    )
 
 
 class DummyIMDServer(threading.Thread):
@@ -124,89 +240,126 @@ class DummyIMDServer(threading.Thread):
     4. LoopBehavior.perform_loop()
     5. DisconnectBehavior.perform_disconnect()
 
-    Each if these behaviors can be changed by calling DummyIMDServer.set_x_behavior(y) where x is the behavior name
-    and y is the behavior object.
-
     Start the server by calling DummyIMDServer.start().
     """
 
     def __init__(
         self,
-        host="localhost",
-        port=8888,
-        imdsessioninfo=None,
-        traj=None,
+        traj,
+        version,
     ):
         """
         If passing `traj` kwarg, ensure it is a copy of the trajectory used
-        in the test to avoid modifying the original trajectory "head" in the
+        in the test to avoid moving the original trajectory "head" in the
         main thread.
         """
         super().__init__(daemon=True)
 
-        if traj is None:
-            traj = mda.Universe(
-                COORDINATES_TOPOLOGY, COORDINATES_TRR
-            ).trajectory
+        logger.debug("DummyIMDServer: Initializing")
 
-        if imdsessioninfo is None:
-            imdsessioninfo = IMDSessionInfo(
-                version=2,
-                endianness="<",
-                imdterm=None,
-                imdwait=None,
-                imdpull=None,
-                wrapped_coords=True,
-                energies=1,
-                dimensions=0,
-                positions=1,
-                velocities=0,
-                forces=0,
-            )
+        self._traj = traj
 
-        self.connection_behavior = DefaultConnectionBehavior(host, port)
+        self._host = "localhost"
+        self._port = 8888
 
-        if imdsessioninfo.version == 2:
-            self.handshake_behavior = DefaultHandshakeV2Behavior(imdsessioninfo)
-            self.loop_behavior = DefaultLoopBehaviorV2(traj, imdsessioninfo)
-        elif imdsessioninfo.version == 3:
-            self.connection_behavior = DefaultConnectionBehavior(
-                "localhost", port
-            )
+        self.connection_behavior = DefaultConnectionBehavior()
+
+        if version == 2:
+            self._imdsessioninfo = create_default_imdsinfo_v2()
+            self.handshake_behavior = DefaultHandshakeV2Behavior()
+            self.loop_behavior = DefaultLoopV2Behavior()
+        elif version == 3:
+            # self.imdsessioninfo = create_default_imdsinfo_v3()
             # self.handshake_behavior = DefaultHandshakeV3Behavior()
+            # self.loop_behavior = DefaultLoopBehaviorV3()
+            pass
 
         self.await_go_behavior = DefaultAwaitGoBehavior()
-
         self.disconnect_behavior = DefaultDisconnectBehavior()
 
+        self._event_q = []
+
     def run(self):
-        conn = self.connection_behavior.perform()[0]
-        self.handshake_behavior.perform(conn)
-        self.await_go_behavior.perform(conn)
-        self.loop_behavior.perform(conn)
-        self.disconnect_behavior.perform(conn)
+        conn = self.connection_behavior.perform(
+            self.host, self.port, self._event_q
+        )[0]
+        self.handshake_behavior.perform(
+            conn, self.imdsessioninfo, self._event_q
+        )
+        self.await_go_behavior.perform(conn, self._event_q)
+        self.loop_behavior.perform(
+            conn, self._traj, self.imdsessioninfo, self._event_q
+        )
+        self.disconnect_behavior.perform(conn, self._event_q)
+        return
 
-    def set_connection_behavior(self, connection_behavior):
-        self.connection_behavior = connection_behavior
+    @property
+    def port(self):
+        return self._port
 
-    def set_handshake_behavior(self, handshake_behavior):
-        self.handshake_behavior = handshake_behavior
+    @port.setter
+    def port(self, port):
+        self._port = port
 
-    def set_await_go_behavior(self, await_go_behavior):
-        self.await_go_behavior = await_go_behavior
+    @property
+    def host(self):
+        return self._host
 
-    def set_loop_behavior(self, loop_behavior):
-        self.loop_behavior = loop_behavior
+    @host.setter
+    def host(self, host):
+        self._host = host
 
-    def set_disconnect_behavior(self, disconnect_behavior):
-        self.disconnect_behavior = disconnect_behavior
+    @property
+    def imdsessioninfo(self):
+        return self._imdsessioninfo
 
+    @imdsessioninfo.setter
+    def imdsessioninfo(self, imdsessioninfo):
+        self._imdsessioninfo = imdsessioninfo
 
-def sock_contains_data(sock, timeout) -> bool:
-    ready_to_read, ready_to_write, in_error = select.select(
-        [sock], [], [], timeout
-    )
-    return sock in ready_to_read
+    @property
+    def connection_behavior(self):
+        return self._connection_behavior
+
+    @connection_behavior.setter
+    def connection_behavior(self, connection_behavior):
+        self._connection_behavior = connection_behavior
+
+    @property
+    def handshake_behavior(self):
+        return self._handshake_behavior
+
+    @handshake_behavior.setter
+    def handshake_behavior(self, handshake_behavior):
+        self._handshake_behavior = handshake_behavior
+
+    @property
+    def await_go_behavior(self):
+        return self._await_go_behavior
+
+    @await_go_behavior.setter
+    def await_go_behavior(self, await_go_behavior):
+        self._await_go_behavior = await_go_behavior
+
+    @property
+    def loop_behavior(self):
+        return self._loop_behavior
+
+    @loop_behavior.setter
+    def loop_behavior(self, loop_behavior):
+        self._loop_behavior = loop_behavior
+
+    @property
+    def disconnect_behavior(self):
+        return self._disconnect_behavior
+
+    @disconnect_behavior.setter
+    def disconnect_behavior(self, disconnect_behavior):
+        self._disconnect_behavior = disconnect_behavior
+
+    @property
+    def event_q(self):
+        return self._event_q
 
 
 def recvuntil(file_path, target_line, timeout):
@@ -238,21 +391,6 @@ def recvuntil(file_path, target_line, timeout):
     raise TimeoutError(
         f"Timeout after {timeout} seconds waiting for '{target_line}'"
     )
-
-
-def check_port_availability(port):
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        s.bind(("0.0.0.0", port))
-    except socket.error as e:
-        if e.errno == socket.errno.EADDRINUSE:
-            print(f"Port {port} is already in use")
-            return False
-        else:
-            raise
-    finally:
-        s.close()
-    return True
 
 
 def get_free_port():
