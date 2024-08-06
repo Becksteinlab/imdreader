@@ -61,14 +61,14 @@ class TestIMDReaderV2:
 
     @pytest.fixture
     def traj(self):
-        return mda.coordinates.TRR.TRRReader(
+        return mda.coordinates.H5MD.H5MDReader(
             COORDINATES_H5MD, convert_units=False
         )
 
     @pytest.fixture
     def ref(self):
-        return mda.coordinates.TRR.TRRReader(
-            COORDINATES_H5MD, convert_units=True
+        return mda.coordinates.H5MD.H5MDReader(
+            COORDINATES_H5MD, convert_units=False
         )
 
     @pytest.fixture
@@ -84,7 +84,7 @@ class TestIMDReaderV2:
 
         reader = imdreader.IMDREADER.IMDReader(
             f"localhost:{port}",
-            convert_units=True,
+            convert_units=False,
             n_atoms=ref.trajectory.n_atoms,
         )
 
@@ -116,7 +116,7 @@ class TestIMDReaderV2:
         # pause every frame (except the first)
         reader = imdreader.IMDREADER.IMDReader(
             f"localhost:{port}",
-            convert_units=True,
+            convert_units=False,
             n_atoms=ref.trajectory.n_atoms,
             buffer_size=imdframe_memsize(
                 ref.trajectory.n_atoms, server.imdsessioninfo
