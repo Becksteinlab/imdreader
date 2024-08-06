@@ -24,7 +24,7 @@ import time
 @pytest.fixture(autouse=True)
 def log_config():
     logger = logging.getLogger("imdreader.IMDREADER")
-    file_handler = logging.FileHandler("tmp/test.log")
+    file_handler = logging.FileHandler("test.log")
     formatter = logging.Formatter(
         "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
