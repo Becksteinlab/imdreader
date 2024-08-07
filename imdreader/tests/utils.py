@@ -10,11 +10,12 @@ from MDAnalysisTests.datafiles import COORDINATES_TOPOLOGY, COORDINATES_TRR
 import abc
 import imdreader
 import logging
+from enum import Enum
 
-logger = logging.getLogger(imdreader.IMDClient.__name__)
+logger = logging.getLogger("imdreader.IMDREADER")
 
 
-class Behavior(abc.ABC):
+class IMDServerBehavior(abc.ABC):
     """Abstract base class for behaviors for the DummyIMDServer to perform.
     Ensure that behaviors do not contain potentially infinite loops- they should be
     testing for a specific sequence of events"""
@@ -24,17 +25,19 @@ class Behavior(abc.ABC):
         pass
 
 
-class DefaultConnectionBehavior(Behavior):
+class DefaultConnectionBehavior(IMDServerBehavior):
 
     def perform(self, host, port, event_q):
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.bind((host, port))
+        logger.debug(f"DummyIMDServer: Listening on {host}:{port}")
+        event_q.append(IMDServerEvent(IMDServerEventType.LISTENING, 120))
         s.listen(120)
         conn, addr = s.accept()
         return (conn, addr)
 
 
-class DefaultHandshakeV2Behavior(Behavior):
+class DefaultHandshakeV2Behavior(IMDServerBehavior):
     def perform(self, conn, imdsessioninfo, event_q):
         header = struct.pack("!i", IMDHeaderType.IMD_HANDSHAKE.value)
         if imdsessioninfo.endianness == "<":
@@ -44,12 +47,12 @@ class DefaultHandshakeV2Behavior(Behavior):
         conn.sendall(header)
 
 
-class DefaultHandshakeV3Behavior(Behavior):
+class DefaultHandshakeV3Behavior(IMDServerBehavior):
     def perform(self, conn, imdsessioninfo, event_q):
         pass
 
 
-class DefaultAwaitGoBehavior(Behavior):
+class DefaultAwaitGoBehavior(IMDServerBehavior):
     def perform(self, conn, event_q):
         conn.settimeout(IMDAWAITGOTIME)
         head_buf = bytearray(IMDHEADERSIZE)
@@ -60,7 +63,7 @@ class DefaultAwaitGoBehavior(Behavior):
         logger.debug("DummyIMDServer: Received IMD_GO")
 
 
-class DefaultLoopV2Behavior(Behavior):
+class DefaultLoopV2Behavior(IMDServerBehavior):
     """Default behavior doesn't allow pausing"""
 
     def perform(self, conn, traj, imdsessioninfo, event_q):
@@ -68,10 +71,7 @@ class DefaultLoopV2Behavior(Behavior):
         headerbuf = bytearray(IMDHEADERSIZE)
         paused = False
 
-        logger.debug("DummyIMDServer: Starting loop")
-
         for i in range(len(traj)):
-            logger.debug(f"DummyIMDServer: generating frame {i}")
 
             energy_header = create_header_bytes(IMDHeaderType.IMD_ENERGIES, 1)
 
@@ -92,6 +92,11 @@ class DefaultLoopV2Behavior(Behavior):
             pos_header = create_header_bytes(
                 IMDHeaderType.IMD_FCOORDS, traj.n_atoms
             )
+
+            logger.debug(
+                f"DummyIMDServer: positions for frame {i}: {traj[i].positions}"
+            )
+
             pos = np.ascontiguousarray(
                 traj[i].positions, dtype=f"{imdsessioninfo.endianness}f"
             ).tobytes()
@@ -107,8 +112,6 @@ class ExpectPauseLoopV2Behavior(DefaultLoopV2Behavior):
     def perform(self, conn, traj, imdsessioninfo, event_q):
         conn.settimeout(10)
         headerbuf = bytearray(IMDHEADERSIZE)
-
-        logger.debug("DummyIMDServer: Starting loop")
 
         for i in range(len(traj)):
             if i != 0:
@@ -147,13 +150,17 @@ class ExpectPauseLoopV2Behavior(DefaultLoopV2Behavior):
             pos_header = create_header_bytes(
                 IMDHeaderType.IMD_FCOORDS, traj.n_atoms
             )
+
+            logger.debug(
+                f"DummyIMDServer: positions for frame {i}: {traj[i].positions}"
+            )
+
             pos = np.ascontiguousarray(
                 traj[i].positions, dtype=f"{imdsessioninfo.endianness}f"
             ).tobytes()
 
             conn.sendall(energy_header + energies)
             conn.sendall(pos_header + pos)
-            logger.debug(f"Sent frame {i}")
 
 
 class ExpectPauseUnpauseAfterLoopV2Behavior(DefaultLoopV2Behavior):
@@ -208,11 +215,24 @@ class ExpectPauseUnpauseAfterLoopV2Behavior(DefaultLoopV2Behavior):
             )
 
 
-class DefaultDisconnectBehavior(Behavior):
+class DefaultDisconnectBehavior(IMDServerBehavior):
     def perform(self, conn, event_q):
         # Gromacs uses the c equivalent of the SHUT_WR flag
         conn.shutdown(socket.SHUT_WR)
         conn.close()
+
+
+class IMDServerEventType(Enum):
+    LISTENING = 0
+
+
+class IMDServerEvent:
+    def __init__(self, event_type, data):
+        self.event_type = event_type
+        self.data = data
+
+    def __str__(self):
+        return f"IMDServerEvent: {self.event_type}, {self.data}"
 
 
 def create_default_imdsinfo_v2():
@@ -234,11 +254,11 @@ def create_default_imdsinfo_v2():
 class DummyIMDServer(threading.Thread):
     """Performs the following steps in order:
 
-    1. ConnectionBehavior.perform_connection()
-    2. HandshakeBehavior.perform_handshake()
-    3. AwaitGoBehavior.perform_await_go()
-    4. LoopBehavior.perform_loop()
-    5. DisconnectBehavior.perform_disconnect()
+    1. ConnectionBehavior.perform()
+    2. HandshakeBehavior.perform()
+    3. AwaitGoBehavior.perform()
+    4. LoopBehavior.perform()
+    5. DisconnectBehavior.perform()
 
     Start the server by calling DummyIMDServer.start().
     """
@@ -280,6 +300,7 @@ class DummyIMDServer(threading.Thread):
         self._event_q = []
 
     def run(self):
+        logger.debug("DummyIMDServer: Starting")
         conn = self.connection_behavior.perform(
             self.host, self.port, self._event_q
         )[0]
@@ -292,6 +313,17 @@ class DummyIMDServer(threading.Thread):
         )
         self.disconnect_behavior.perform(conn, self._event_q)
         return
+
+    def wait_for_event(self, event_type, timeout=10, poll_interval=0.1):
+        end_time = time.time() + timeout
+        while time.time() < end_time:
+            time.sleep(poll_interval)
+            for event in self._event_q:
+                if event.event_type == event_type:
+                    return event
+        raise TimeoutError(
+            f"DummyIMDServer: Timeout after {timeout} seconds waiting for event {event_type}"
+        )
 
     @property
     def port(self):

@@ -105,7 +105,7 @@ class IMDReader(ReaderBase):
 
         super(IMDReader, self).__init__(filename, **kwargs)
 
-        logger.debug("Reader initializing")
+        logger.debug("IMDReader initializing")
 
         if n_atoms is None:
             raise ValueError("IMDReader: n_atoms must be specified")

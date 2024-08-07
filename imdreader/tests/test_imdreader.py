@@ -7,6 +7,7 @@ import MDAnalysis as mda
 import imdreader
 from imdreader.IMDClient import imdframe_memsize
 from .utils import (
+    IMDServerEventType,
     DummyIMDServer,
     get_free_port,
     ExpectPauseLoopV2Behavior,
@@ -38,6 +39,8 @@ def log_config():
     yield
     logger.removeHandler(file_handler)
 
+
+logger = logging.getLogger("imdreader.IMDREADER")
 
 IMDENERGYKEYS = [
     "step",
@@ -76,11 +79,18 @@ class TestIMDReaderV2:
         server = DummyIMDServer(traj, 2)
         return server
 
-    @pytest.mark.parametrize("endianness", ["<", ">"])
-    def test_endianness_traj_unchanged(self, server, endianness, ref, port):
+    @pytest.fixture(params=[">", "<"])
+    def setup_test_endianness_traj_unchanged(self, request, server, port):
         server.port = port
-        server.imdsessioninfo.endianness = endianness
+        server.imdsessioninfo.endianness = request.param
         server.start()
+        server.wait_for_event(IMDServerEventType.LISTENING)
+        return server, port
+
+    def test_endianness_traj_unchanged(
+        self, setup_test_endianness_traj_unchanged, ref
+    ):
+        server, port = setup_test_endianness_traj_unchanged
 
         reader = imdreader.IMDREADER.IMDReader(
             f"localhost:{port}",
@@ -94,6 +104,9 @@ class TestIMDReaderV2:
         timesteps = []
 
         for ts in reader:
+            logger.debug(
+                f"test_imdreader: positions for frame {i}: {ts.positions}"
+            )
             timesteps.append(ts.copy())
             i += 1
 
@@ -106,11 +119,16 @@ class TestIMDReaderV2:
                 assert timesteps[j].data[energy_key] == j + offset
                 offset += 1
 
-    def test_pause_traj_unchanged(self, server, ref, port):
+    @pytest.fixture
+    def setup_test_pause_traj_unchanged(self, server, port):
         server.port = port
         server.loop_behavior = ExpectPauseLoopV2Behavior()
         server.start()
+        server.wait_for_event(IMDServerEventType.LISTENING)
+        return server, port
 
+    def test_pause_traj_unchanged(self, setup_test_pause_traj_unchanged, ref):
+        server, port = setup_test_pause_traj_unchanged
         # Give the reader only 1 IMDFrame of memory
         # We expect the producer thread to have to
         # pause every frame (except the first)

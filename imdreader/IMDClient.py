@@ -53,20 +53,19 @@ class IMDClient:
 
     def _connect_to_server(self, host, port, socket_bufsize):
         """
-        Establish connection with the server, failing out if this
-        does not occur within 5 seconds.
+        Establish connection with the server, failing out instantly if server is not running
         """
         conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         if socket_bufsize is not None:
             conn.setsockopt(
                 socket.SOL_SOCKET, socket.SO_RCVBUF, self._socket_bufsize
             )
-        conn.settimeout(60)
         try:
+            logger.debug(f"IMDClient: Connecting to {host}:{port}")
             conn.connect((host, port))
         except ConnectionRefusedError:
             raise ConnectionRefusedError(
-                f"IMDReader: Connection to {host}:{port} refused"
+                f"IMDClient: Connection to {host}:{port} refused"
             )
         return conn
 
@@ -226,10 +225,8 @@ class IMDProducer(threading.Thread):
                         self._unpause()
                         self._paused = False
 
-                logger.debug(f"IMDProducer: Attempting to get timestep")
                 imdf = self._buf.pop_empty_imdframe()
 
-                logger.debug(f"IMDProducer: Attempting to read nrg and pos")
                 # NOTE: This can be replaced with a simple parser if
                 # the server doesn't send the final frame with all data
                 # as in xtc
@@ -238,34 +235,27 @@ class IMDProducer(threading.Thread):
                 )
                 read_into_buf(self._conn, self._energies)
 
-                logger.debug("read energy data")
                 imdf.energies.update(
                     parse_energy_bytes(
                         self._energies, self._imdsinfo.endianness
                     )
                 )
-                logger.debug(f"IMDProducer: added energies to {imdf.energies}")
-
-                logger.debug(f"IMDProducer: added energies to imdf")
 
                 self._expect_header(
                     IMDHeaderType.IMD_FCOORDS, expected_value=self._n_atoms
                 )
 
-                logger.debug(f"IMDProducer: Expected header")
                 read_into_buf(self._conn, self._positions)
-
-                logger.debug(f"IMDProducer: attempting to load ts")
 
                 imdf.positions = np.frombuffer(
                     self._positions, dtype=f"{self._imdsinfo.endianness}f"
                 ).reshape((self._n_atoms, 3))
 
-                logger.debug(f"IMDProducer: ts loaded- inserting it")
+                logger.debug(
+                    f"IMDProducer: positions for frame {self._frame}: {imdf.positions}"
+                )
 
                 self._buf.push_full_imdframe(imdf)
-
-                logger.debug(f"IMDProducer: ts inserted")
 
                 self._frame += 1
         except EOFError:
@@ -276,7 +266,7 @@ class IMDProducer(threading.Thread):
             pass
         finally:
 
-            logger.debug("IMDProducer: simulation ended")
+            logger.debug("IMDProducer: Simulation ended, cleaning up")
 
             # Tell reader not to expect more frames to be added
             self._buf.notify_producer_finished()
@@ -290,10 +280,7 @@ class IMDProducer(threading.Thread):
 
         read_into_buf(self._conn, self._header)
 
-        logger.debug(f"IMDProducer: header: {self._header}")
         header = IMDHeader(self._header)
-
-        logger.debug(f"IMDProducer: header parsed")
 
         if header.type != expected_type:
             raise RuntimeError
@@ -353,7 +340,7 @@ class IMDFrameBuffer:
         imdf_memsize = imdframe_memsize(n_atoms, imdsinfo)
         self._total_imdf = buffer_size // imdf_memsize
         logger.debug(
-            f"IMDFRAMEBuffer: Total timesteps allocated: {self._total_imdf}"
+            f"IMDFrameBuffer: Total timesteps allocated: {self._total_imdf}"
         )
         if self._total_imdf == 0:
             raise ValueError(
@@ -436,9 +423,11 @@ class IMDFrameBuffer:
 
         imdf = self._full_q.get()
 
-        self._prev_empty_imdf = imdf
+        logger.debug(
+            f"IMDFrameBuffer: positions for frame {self._frame}: {imdf.positions}"
+        )
 
-        logger.debug(f"IMDReader: Got frame {self._frame}")
+        self._prev_empty_imdf = imdf
 
         return imdf
 
@@ -519,17 +508,17 @@ def read_into_buf(sock, buf) -> bool:
                 # Server called close()
                 # Server is definitely done sending frames
                 logger.debug(
-                    "IMDProducer: recv excepting due to server calling close()"
+                    "read_into_buf excepting due to server calling close()"
                 )
                 raise EOFError
         except TimeoutError:
             # Server is *likely* done sending frames
-            logger.debug("IMDProducer: recv excepting due to timeout")
+            logger.debug("read_into_buf excepting due to timeout")
             raise EOFError
         except BlockingIOError:
             # Occurs when timeout is 0 in place of a TimeoutError
             # Server is *likely* done sending frames
-            logger.debug("IMDProducer: recv excepting due to blocking")
+            logger.debug("read_into_buf excepting due to blocking")
             raise EOFError
         total_received += received
 
