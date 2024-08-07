@@ -11,7 +11,9 @@ from .utils import (
     DummyIMDServer,
     get_free_port,
     ExpectPauseLoopV2Behavior,
+    create_default_imdsinfo_v2,
 )
+from .server import TestIMDServer
 from MDAnalysisTests.coordinates.base import (
     MultiframeReaderTest,
     BaseReference,
@@ -162,3 +164,57 @@ class TestIMDReaderV2:
     def test_no_connection(self):
         with pytest.raises(ConnectionRefusedError):
             imdreader.IMDREADER.IMDReader("localhost:12345", n_atoms=1)
+
+
+class TestIMDReaderWithBlockingServerV2:
+
+    @pytest.fixture
+    def port(self):
+        return get_free_port()
+
+    @pytest.fixture
+    def traj(self):
+        return mda.coordinates.H5MD.H5MDReader(
+            COORDINATES_H5MD, convert_units=False
+        )
+
+    @pytest.fixture
+    def ref(self):
+        return mda.coordinates.H5MD.H5MDReader(
+            COORDINATES_H5MD, convert_units=False
+        )
+
+    @pytest.fixture
+    def server(self, traj):
+        server = TestIMDServer(traj)
+        yield server
+        server.cleanup()
+
+    @pytest.mark.parametrize("endianness", [">", "<"])
+    def test_change_endianness_traj_unchanged(self, ref, server, endianness):
+        imdsinfo = create_default_imdsinfo_v2()
+        imdsinfo.endianness = endianness
+
+        host = "localhost"
+        port = get_free_port()
+
+        # This also sends first frame to prevent blocking
+        # in reader's init
+        server.listen_accept_handshake_send_ts(host, port, imdsinfo)
+        reader = imdreader.IMDREADER.IMDReader(
+            f"localhost:{port}",
+            n_atoms=ref.trajectory.n_atoms,
+            convert_units=False,
+        )
+
+        i = 0
+        timesteps = []
+        for ts in reader:
+            if i != 4:
+                server.send_frame(i + 1, endianness=endianness)
+            if i == 4:
+                server.disconnect()
+            timesteps.append(ts.copy())
+            i += 1
+
+        assert i == len(ref)

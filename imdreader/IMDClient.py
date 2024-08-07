@@ -419,10 +419,6 @@ class IMDFrameBuffer:
 
         self._t1 = self._t2
         self._t2 = time.time()
-        if self._t1 is not None:
-            logger.debug(
-                f"IMDReader: Frame #{self._frame} analyzed in {self._t2 - self._t1} seconds"
-            )
 
         # Return the processed IMDFrame
         if self._prev_empty_imdf is not None:
@@ -447,6 +443,11 @@ class IMDFrameBuffer:
 
         self._prev_empty_imdf = imdf
         self._frame += 1
+
+        if self._t1 is not None:
+            logger.debug(
+                f"IMDReader: Frame #{self._frame} analyzed in {self._t2 - self._t1} seconds"
+            )
 
         return imdf
 
