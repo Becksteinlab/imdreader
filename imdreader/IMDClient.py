@@ -254,6 +254,7 @@ class IMDProducer(threading.Thread):
                 logger.debug(
                     f"IMDProducer: positions for frame {self._frame}: {imdf.positions}"
                 )
+                logger.debug(f"IMDProducer: imdf frame ID: {imdf.ID}")
 
                 self._buf.push_full_imdframe(imdf)
 
@@ -340,7 +341,7 @@ class IMDFrameBuffer:
         imdf_memsize = imdframe_memsize(n_atoms, imdsinfo)
         self._total_imdf = buffer_size // imdf_memsize
         logger.debug(
-            f"IMDFrameBuffer: Total timesteps allocated: {self._total_imdf}"
+            f"IMDFrameBuffer: Total IMDFrames allocated: {self._total_imdf}"
         )
         if self._total_imdf == 0:
             raise ValueError(
@@ -403,8 +404,6 @@ class IMDFrameBuffer:
                 f"IMDReader: Frame #{self._frame} analyzed in {self._t2 - self._t1} seconds"
             )
 
-        self._frame += 1
-
         # Return the processed IMDFrame
         if self._prev_empty_imdf is not None:
             self._empty_q.put(self._prev_empty_imdf)
@@ -412,7 +411,6 @@ class IMDFrameBuffer:
                 self._empty_imdf_avail.notify()
 
         # Get the next IMDFrame
-        logger.debug("IMDReader: Attempting to get next frame")
         with self._full_imdf_avail:
             while self._full_q.qsize() == 0 and not self._producer_finished:
                 self._full_imdf_avail.wait()
@@ -426,8 +424,11 @@ class IMDFrameBuffer:
         logger.debug(
             f"IMDFrameBuffer: positions for frame {self._frame}: {imdf.positions}"
         )
+        logger.debug(f"IMDFrameBuffer: imdf frame ID: {imdf.ID}")
+
 
         self._prev_empty_imdf = imdf
+        self._frame += 1
 
         return imdf
 
@@ -444,7 +445,16 @@ class IMDFrameBuffer:
 
 
 class IMDFrame:
+
+    id = -1
+
+    @staticmethod
+    def get_ID():
+        IMDFrame.id += 1
+        return IMDFrame.id
+
     def __init__(self, n_atoms, imdsinfo):
+        self.ID = self.get_ID()
         if imdsinfo.energies > 0:
             self.energies = {
                 "step": 0,
