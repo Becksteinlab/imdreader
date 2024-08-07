@@ -247,9 +247,13 @@ class IMDProducer(threading.Thread):
 
                 read_into_buf(self._conn, self._positions)
 
-                imdf.positions = np.frombuffer(
-                    self._positions, dtype=f"{self._imdsinfo.endianness}f"
-                ).reshape((self._n_atoms, 3))
+                # must copy the buffer since frombuffer just creates a view
+                np.copyto(
+                    imdf.positions,
+                    np.frombuffer(
+                        self._positions, dtype=f"{self._imdsinfo.endianness}f"
+                    ).reshape((self._n_atoms, 3)),
+                )
 
                 logger.debug(
                     f"IMDProducer: positions for frame {self._frame}: {imdf.positions}"
@@ -425,7 +429,6 @@ class IMDFrameBuffer:
             f"IMDFrameBuffer: positions for frame {self._frame}: {imdf.positions}"
         )
         logger.debug(f"IMDFrameBuffer: imdf frame ID: {imdf.ID}")
-
 
         self._prev_empty_imdf = imdf
         self._frame += 1
