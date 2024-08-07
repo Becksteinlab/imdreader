@@ -23,6 +23,26 @@ class IMDClient:
         unpause_empty_proportion=0.5,
         **kwargs,
     ):
+        """
+        Parameters
+        ----------
+        host : str
+            Hostname of the server
+        port : int
+            Port number of the server
+        n_atoms : int
+            Number of atoms in the simulation
+        socket_bufsize : int, optional
+            Size of the socket buffer in bytes. Default is to use the system default
+        buffer_size : int, optional
+            IMDFramebuffer will be filled with as many IMDFrames fit in `buffer_size` [``10MB``]
+        pause_empty_proportion : float, optional
+            Lower threshold proportion of the buffer's IMDFrames that are empty
+            before the simulation is paused [``0.25``]
+        unpause_empty_proportion : float, optional
+            Proportion of the buffer's IMDFrames that must be empty
+            before the simulation is unpaused [``0.5``]
+        """
 
         conn = self._connect_to_server(host, port, socket_bufsize)
         self._imdsinfo = self._await_IMD_handshake(conn)
@@ -178,9 +198,6 @@ class IMDProducer(threading.Thread):
             self._forces = bytearray(xvf_bytes)
 
     def _pause(self):
-        """
-        Block the simulation until the buffer has more space.
-        """
         self._conn.settimeout(0)
         logger.debug(
             "IMDProducer: Pausing simulation because buffer is almost full"
@@ -258,7 +275,6 @@ class IMDProducer(threading.Thread):
                 logger.debug(
                     f"IMDProducer: positions for frame {self._frame}: {imdf.positions}"
                 )
-                logger.debug(f"IMDProducer: imdf frame ID: {imdf.ID}")
 
                 self._buf.push_full_imdframe(imdf)
 
@@ -428,7 +444,6 @@ class IMDFrameBuffer:
         logger.debug(
             f"IMDFrameBuffer: positions for frame {self._frame}: {imdf.positions}"
         )
-        logger.debug(f"IMDFrameBuffer: imdf frame ID: {imdf.ID}")
 
         self._prev_empty_imdf = imdf
         self._frame += 1
@@ -449,15 +464,7 @@ class IMDFrameBuffer:
 
 class IMDFrame:
 
-    id = -1
-
-    @staticmethod
-    def get_ID():
-        IMDFrame.id += 1
-        return IMDFrame.id
-
     def __init__(self, n_atoms, imdsinfo):
-        self.ID = self.get_ID()
         if imdsinfo.energies > 0:
             self.energies = {
                 "step": 0,

@@ -90,7 +90,7 @@ class TestIMDReaderV2:
     def test_endianness_traj_unchanged(
         self, setup_test_endianness_traj_unchanged, ref
     ):
-        server, port = setup_test_endianness_traj_unchanged
+        _, port = setup_test_endianness_traj_unchanged
 
         reader = imdreader.IMDREADER.IMDReader(
             f"localhost:{port}",
@@ -129,7 +129,8 @@ class TestIMDReaderV2:
 
     def test_pause_traj_unchanged(self, setup_test_pause_traj_unchanged, ref):
         server, port = setup_test_pause_traj_unchanged
-        # Give the reader only 1 IMDFrame of memory
+
+        # Give the buffer only 1 IMDFrame of memory
         # We expect the producer thread to have to
         # pause every frame (except the first)
         reader = imdreader.IMDREADER.IMDReader(
