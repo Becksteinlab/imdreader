@@ -109,6 +109,8 @@ is responsible for configuring the IMD client for handling this case.
      - kilojoules/(mol*angstrom)
    * - Time
      - picosecond
+   * - Energy
+     - kilojoules/mol
 
 Packet order
 ------------
