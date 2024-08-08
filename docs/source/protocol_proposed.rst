@@ -6,13 +6,13 @@ New packets
 
 There will be 5 new packets:
 
-1. (MDAnalysis -> Gromacs) IMD_V3SWITCH, sent immediately after IMD_GO to specify IMDv3 should be used
+1. (MDAnalysis -> Gromacs) IMD_V3, sent immediately after IMD_GO to specify IMDv3 should be used
 
 .. code-block:: none
 
    Header: 
       Value:
-         10 (uint32) (IMD_V3SWITCH)
+         10 (uint32) (IMD_V3)
       Length:
          <val> (bit) Send IMD_TIME packets [bool]
          <val> (bit) Send IMD_ENERGIES packets [bool]
@@ -23,15 +23,18 @@ There will be 5 new packets:
          <val> (bit) Wrap coords [bool, does nothing if FCOORDS not sent]
          0 (25 bits) Unused
 
-2. (MDAnalysis -> Gromacs) IMD_RESUME, used to unpause a running simulation.
+2. (Gromacs -> MDAnalysis) IMD_BOX
 
 .. code-block:: none
 
    Header:
-      Value: 
-         11 (uint32) (IMD_RESUME)
+      Value:
+         11 (uint32) (IMD_BOX)
       Length:
-         <val> (unused length attribute)
+         <val> (float32) (Number of matrix elements depending of box type)
+
+   Body:
+         <val> (float32) (Length and angle of the simulation box)
 
 
 3. (Gromacs -> MDAnalysis) IMD_TIME
@@ -74,6 +77,16 @@ There will be 5 new packets:
       <val> (float32) (n atoms * 3 values describing the forces of each atom in the system in kilojoules/(mol*angstrom))
 
 
+6. (MDAnalysis -> Gromacs) IMD_RESUME, used to unpause a running simulation.
+
+.. code-block:: none
+
+   Header:
+      Value:
+         15 (uint32) (IMD_RESUME)
+      Length:
+         <val> (unused length attribute)      
+
 
 Units
 -----
@@ -109,13 +122,13 @@ Data packets are always sent in this order for each frame, if present.
 5. IMD_VELOCITIES
 6. IMD_FORCES
 
-For example, if the switch to send IMD_TIME was off in IMD_V3SWITCH, the resulting data packet order would be the same
+For example, if the switch to send IMD_TIME was off in IMD_V3, the resulting data packet order would be the same
 except starting at 2.
 
 Idempotency
 -----------
 
-If the IMD_V3SWITCH has been sent, making the simulation an IMDV3 simulation, IMD_PAUSE becomes an idempotent operation; 
+If the IMD_V3 has been sent, making the simulation an IMDV3 simulation, IMD_PAUSE becomes an idempotent operation; 
 sending it more than once has the same effect as sending it once. The only way to unpause a paused IMDV3 simulaton is to send
 an IMD_RESUME packet, which is also idempotent.
 
@@ -130,7 +143,7 @@ IMDV3 will be used and this occurs after the handshake. Communication happens in
 
    (Gromacs -> MDAnalysis) IMD_HANDSHAKE
    (MDAnalysis -> Gromacs) IMD_GO
-   (MDAnalysis -> Gromacs) IMD_V3SWITCH
+   (MDAnalysis -> Gromacs) IMD_V3
 
 
 Use of IMD_IOERROR
@@ -138,11 +151,11 @@ Use of IMD_IOERROR
 
 Though there are no cases where IMD_IOERROR is actually sent in an 
 IMD stream in the current Gromacs implementation of IMDV2, this packet will be sent from
-the server to the client in IMDV3 whenever the client sends the simulation server an IMD_V3SWITCH packet
+the server to the client in IMDV3 whenever the client sends the simulation server an IMD_V3 packet
 containing configuration options that the simulation server doesn't support.
 
 For example, if the simulation server doesn't support wrapped coordinates, but the client sends the 
-IMD_V3SWITCH packet with a body containing a value of "1" for wrapped coordinates, the server will
+IMD_V3 packet with a body containing a value of "1" for wrapped coordinates, the server will
 send the client an "IMD_IOERROR" packet.
 
 .. code-block:: none
@@ -152,3 +165,19 @@ send the client an "IMD_IOERROR" packet.
          9 (uint32) (IMD_IOERROR)
       Length:
          <val> Unused length attribute
+
+
+Binary Switches
+------------------
+
+Each bit in 4-byte (32 bits) integer act as an on/off switch for different pieces of information. We have 25 bits left, which we can add more switches if needed.
+
+.. code-block:: none
+
+   Time: '00000000000000000000000000000001'
+   Position: '00000000000000000000000000000010'
+   Velocity: '00000000000000000000000000000100'
+   Forces: '00000000000000000000000000001000'
+   Energy: '00000000000000000000000000010000'
+   Box: '00000000000000000000000000100000'
+   Wrap Coordinates: '00000000000000000000000001000000'
