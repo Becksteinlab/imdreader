@@ -1,51 +1,114 @@
 Proposed Protocol v3
 ====================
 
-The suggested changes to the protocol are as follows:
+New packets
+-----------
 
-1. Via an ``.mdp`` file setting, the user should be able to specify which of simulation box, positions, forces, and velocities are sent.
-   These should be rate-adjustable like with xtc and trr output settings but should be set to every step by default.
+There will be 5 new packets:
 
-2. The IMD_HANDSHAKE packet should have a 1-byte body which contains the configuration settings the simulation was setup with.
-   This will allow the client to be choose appropriate packets to send and receive without redundant configuration.
-
-   The modified handshake packet would look like this:
+1. (MDAnalysis -> Gromacs) IMD_V3SWITCH, sent immediately after IMD_GO to specify IMDv3 should be used
 
 .. code-block:: none
 
-    Header: 
-        4 (int32) (IMD_HANDSHAKE)
-        2 (int32) (Protocol version, must be unswapped so client can determine endianness)
-    Body:
-        <val> (bit) (imdpull: true or false)
-        <val> (bit) (imdwait: true or false)
-        <val> (bit) (imdterm: true or false)
-        <val> (bit) (wrapped positions: true or false. if positions rate is 0, this is a placeholder value)
+   Header: 
+      Value:
+         10 (uint32) (IMD_V3SWITCH)
+      Length:
+         <val> (bit) Send IMD_TIME packets [bool]
+         <val> (bit) Send IMD_ENERGIES packets [bool]
+         <val> (bit) Send IMD_BOX packets [bool]
+         <val> (bit) Send IMD_FCOORDS packets [bool]
+         <val> (bit) Send IMD_VELOCITIES packets [bool]
+         <val> (bit) Send IMD_FORCES packets [bool]
+         <val> (bit) Wrap coords [bool, does nothing if FCOORDS not sent]
+         0 (25 bits) Unused
 
-        <val> (int32) (energies rate: number of steps that elapse between steps that contain energy data. 0 means never)
-        <val> (int32) (dimensions rate: number of steps that elapse between steps that contain dimension data. 0 means never)
-        <val> (int32) (positions rate: number of steps that elapse between steps that contain position data. 0 means never)
-        <val> (int32) (velocities rate: number of steps that elapse between steps that contain velocity data. 0 means never)
-        <val> (int32) (forces rate: number of steps that elapse between steps that contain force data. 0 means never)
+2. (MDAnalysis -> Gromacs) IMD_RESUME, used to unpause a running simulation.
 
-   "wrapped positions" will be a new ``.mdp`` setting which specifies whether the atoms' positions
-   should be adjusted to fit within the simulation box before sending. This is useful for visualization purposes.
+.. code-block:: none
 
-3. The server should wait longer than 1 second (possibly up to 60s) for the go signal so that the client 
-   has plenty of time to allocate memory buffers based on the endianness and information on included data types 
-   it received in the handshake packet.
+   Header:
+      Value: 
+         11 (uint32) (IMD_RESUME)
+      Length:
+         <val> (unused length attribute)
 
-4. In the simulation loop, the server will send the client data in this order (if the configuration says to send it)
-    
-    i. Energy data (IMD_ENERGIES) unchanged
-    
-    ii. Dimension data (IMD_BOX) in triclinic vectors
 
-    iii. Position data (IMD_FCOORDS) unchanged except box adjustments (see 5)
-    
-    iv. Velocity data (IMD_VELS) in the same manner as positions
-    
-    v. Force data (IMD_FORCES) in the same manner as positions
+3. (Gromacs -> MDAnalysis) IMD_TIME
 
-5. The server will send a new IMD_EOS (end of stream) packet after the last frame is sent unless the client initiates the disconnection with
-   IMD_DISCONNECT.
+.. code-block:: none
+
+   Header:
+      Value:
+         12 (uint32) (IMD_TIME)
+      Length:
+         <val> (float32) (dt for the simulation)
+
+   Body:
+      <val> (float32) (Current time in picoseconds)
+
+
+4. (Gromacs -> MDAnalysis) IMD_VELOCITIES
+
+.. code-block:: none
+
+   Header:
+      Value:
+         13 (uint32) (IMD_VELOCITIES)
+      Length:
+         <val> (uint32) (Number of atoms in the system)
+
+   Body:
+      <val> (float32) (n atoms * 3 values describing the velocities of each atom in the system in angstroms/picosecond)
+
+5. (Gromacs -> MDAnalysis) IMD_FORCES
+
+.. code-block:: none
+
+   Header:
+      Value:
+         14 (uint32) (IMD_FORCES)
+      Length:
+         <val> (uint32) (Number of atoms in the system)
+   Body:
+      <val> (float32) (n atoms * 3 values describing the forces of each atom in the system in kilojoules/(mol*angstrom))
+
+
+
+Units
+-----
+
+.. list-table::
+   :widths: 10 20
+   :header-rows: 1
+
+   * - Measurement
+     - Unit
+   * - Length
+     - Angstroms
+   * - Velocity
+     - Angstrom/picosecond
+   * - Force
+     - kilojoules/(mol*angstrom)
+
+Packet order
+------------
+
+Data packets are always sent in this order, if present.
+
+1. IMD_TIME
+2. IMD_ENERGIES
+3. IMD_BOX
+4. IMD_FCOORDS
+5. IMD_VELOCITIES
+6. IMD_FORCES
+
+For example, if the switch to send IMD_TIME was off in IMD_V3SWITCH, the resulting data packet order would be the same
+except starting at 2.
+
+Idempotency
+-----------
+
+If the IMD_V3SWITCH has been sent, making the simulation an IMDV3 simulation, IMD_PAUSE becomes an idempotent operation; 
+sending it more than once has the same effect as sending it once. The only way to unpause a paused IMDV3 simulaton is to send
+an IMD_RESUME packet, which is also idempotent.
