@@ -100,7 +100,7 @@ is responsible for configuring the IMD client for handling this case.
 Packet order
 ------------
 
-Data packets are always sent in this order, if present.
+Data packets are always sent in this order for each frame, if present.
 
 1. IMD_TIME
 2. IMD_ENERGIES
