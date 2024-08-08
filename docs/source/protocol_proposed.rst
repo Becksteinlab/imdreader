@@ -131,3 +131,24 @@ IMDV3 will be used and this occurs after the handshake. Communication happens in
    (Gromacs -> MDAnalysis) IMD_HANDSHAKE
    (MDAnalysis -> Gromacs) IMD_GO
    (MDAnalysis -> Gromacs) IMD_V3SWITCH
+
+
+Use of IMD_IOERROR
+------------------
+
+Though there are no cases where IMD_IOERROR is actually sent in an 
+IMD stream in the current Gromacs implementation of IMDV2, this packet will be sent from
+the server to the client in IMDV3 whenever the client sends the simulation server an IMD_V3SWITCH packet
+containing configuration options that the simulation server doesn't support.
+
+For example, if the simulation server doesn't support wrapped coordinates, but the client sends the 
+IMD_V3SWITCH packet with a body containing a value of "1" for wrapped coordinates, the server will
+send the client an "IMD_IOERROR" packet.
+
+.. code-block:: none
+
+   Header:
+      Value:
+         9 (uint32) (IMD_IOERROR)
+      Length:
+         <val> Unused length attribute
