@@ -78,6 +78,10 @@ There will be 5 new packets:
 Units
 -----
 
+The units for IMDV3 are fixed. The simulation engine must convert values into these units before
+sending them via IMD. If the simulation is unitless, no conversion is necessary and the user
+is responsible for configuring the IMD client for handling this case.
+
 .. list-table::
    :widths: 10 20
    :header-rows: 1
@@ -85,11 +89,13 @@ Units
    * - Measurement
      - Unit
    * - Length
-     - Angstroms
+     - angstrom
    * - Velocity
-     - Angstrom/picosecond
+     - angstrom/picosecond
    * - Force
      - kilojoules/(mol*angstrom)
+   * - Time
+     - picosecond
 
 Packet order
 ------------
