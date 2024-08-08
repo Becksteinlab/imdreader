@@ -118,3 +118,16 @@ Idempotency
 If the IMD_V3SWITCH has been sent, making the simulation an IMDV3 simulation, IMD_PAUSE becomes an idempotent operation; 
 sending it more than once has the same effect as sending it once. The only way to unpause a paused IMDV3 simulaton is to send
 an IMD_RESUME packet, which is also idempotent.
+
+Backwards compatibility
+-----------------------
+
+Note that the "length" attribute in IMD_HANDSHAKE is still always 2 even in IMDV3.
+This is because the client is responsible for informing the simulation server that 
+IMDV3 will be used and this occurs after the handshake. Communication happens in this order:
+
+.. code-block:: none
+
+   (Gromacs -> MDAnalysis) IMD_HANDSHAKE
+   (MDAnalysis -> Gromacs) IMD_GO
+   (MDAnalysis -> Gromacs) IMD_V3SWITCH
