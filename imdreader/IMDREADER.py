@@ -94,8 +94,6 @@ class IMDReader(ReaderBase):
         filename : a string of the form "host:port" where host is the hostname
             or IP address of the listening GROMACS server and port
             is the port number.
-        convert_units : bool (optional)
-            convert units to MDAnalysis units [``True``]
         n_atoms : int (optional)
             number of atoms in the system. defaults to number of atoms
             in the topology. don't set this unless you know what you're doing.
@@ -116,27 +114,22 @@ class IMDReader(ReaderBase):
         # This starts the simulation
         self._imdclient = IMDClient(host, port, n_atoms, **kwargs)
 
-        self._imdsinfo = self._imdclient.get_imdsessioninfo()
+        imdsinfo = self._imdclient.get_imdsessioninfo()
 
-        self.convert_units = convert_units
-        # NOTE: changme after deciding how imdreader will handle units
-        self.units = {
-            "time": "ps",
-            "length": "nm",
-            "force": "kJ/(mol*nm)",
-            "velocity": "nm/ps",
-        }
         self.ts = self._Timestep(
             self.n_atoms,
-            positions=(self._imdsinfo.positions > 0),
-            velocities=(self._imdsinfo.velocities > 0),
-            forces=(self._imdsinfo.forces > 0),
+            positions=imdsinfo.positions,
+            velocities=imdsinfo.velocities,
+            forces=imdsinfo,
             **self._ts_kwargs,
         )
 
         self._frame = -1
 
-        self._read_next_timestep()
+        try:
+            self._read_next_timestep()
+        except StopIteration:
+            raise RuntimeError("IMDReader: No data found in stream")
 
     def _read_next_timestep(self):
         # No rewinding- to both load the first frame on __init__
@@ -157,9 +150,6 @@ class IMDReader(ReaderBase):
 
         self._load_imdframe_into_ts(imdf)
 
-        if self.convert_units:
-            self._convert_units()
-
         self._frame = frame
 
         if self._init_scope:
@@ -170,36 +160,20 @@ class IMDReader(ReaderBase):
 
     def _load_imdframe_into_ts(self, imdf):
         self.ts.frame = self._frame
-        # NOTE: need time.
+        if imdf.time is not None:
+            self.ts.time = imdf.time
+            # NOTE: timestep.pyx "dt" method is suspicious bc it uses "new" keyword on a float
+            self.ts.data["dt"] = imdf.dt
         if imdf.energies is not None:
             self.ts.data.update(imdf.energies)
-        if imdf.dimensions is not None:
-            self.ts.dimensions = core.triclinic_box(*imdf.dimensions)
+        if imdf.box is not None:
+            self.ts.dimensions = core.triclinic_box(*imdf.box)
         if imdf.positions is not None:
             self.ts.positions = imdf.positions
         if imdf.velocities is not None:
             self.ts.velocities = imdf.velocities
         if imdf.forces is not None:
             self.ts.forces = imdf.forces
-
-    def _convert_units(self):
-        """converts time, position, velocity, and force values if they
-        are not given in MDAnalysis standard units
-        """
-
-        self.ts.time = self.convert_time_from_native(self.ts.time)
-
-        if self.ts.dimensions is not None:
-            self.convert_pos_from_native(self.ts.dimensions[:3])
-
-        if self.ts.has_positions:
-            self.convert_pos_from_native(self.ts.positions)
-
-        if self.ts.has_velocities:
-            self.convert_velocities_from_native(self.ts.velocities)
-
-        if self.ts.has_forces:
-            self.convert_forces_from_native(self.ts.forces)
 
     @property
     def n_frames(self):
