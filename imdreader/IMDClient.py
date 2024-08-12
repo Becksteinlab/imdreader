@@ -7,6 +7,7 @@ import select
 import time
 import numpy as np
 from typing import Union, Dict
+import signal
 
 logger = logging.getLogger("imdreader.IMDREADER")
 
@@ -48,9 +49,9 @@ class IMDClient:
             frames will be buffered. Single-threaded, blocking IMDClient
             should only be used in testing [[``True``]]
         """
-
-        conn = self._connect_to_server(host, port, socket_bufsize)
-        self._imdsinfo = self._await_IMD_handshake(conn)
+        self._stopped = False
+        self._conn = self._connect_to_server(host, port, socket_bufsize)
+        self._imdsinfo = self._await_IMD_handshake()
         self._multithreaded = multithreaded
 
         if self._multithreaded:
@@ -65,7 +66,7 @@ class IMDClient:
             self._buf = None
         if self._imdsinfo.version == 2:
             self._producer = IMDProducerV2(
-                conn,
+                self._conn,
                 self._buf,
                 self._imdsinfo,
                 n_atoms,
@@ -73,17 +74,24 @@ class IMDClient:
             )
         elif self._imdsinfo.version == 3:
             self._producer = IMDProducerV3(
-                conn,
+                self._conn,
                 self._buf,
                 self._imdsinfo,
                 n_atoms,
                 multithreaded,
             )
 
-        self._go(conn)
+        self._go()
 
         if self._multithreaded:
+            signal.signal(signal.SIGINT, self.signal_handler)
             self._producer.start()
+
+    def signal_handler(self, sig, frame):
+        """Catch SIGINT to allow clean shutdown on CTRL+C
+        This also ensures that main thread execution doesn't get stuck
+        waiting in buf.pop_full_imdframe()"""
+        self.stop()
 
     def get_imdframe(self):
         """
@@ -93,18 +101,35 @@ class IMDClient:
             If there are no more frames to read from the stream
         """
         if self._multithreaded:
-            return self._buf.pop_full_imdframe()
+            try:
+                return self._buf.pop_full_imdframe()
+            except EOFError:
+                # in this case, consumer is already finished
+                # and doesn't need to be notified
+                self._disconnect()
+                self._stopped = True
+                raise EOFError
         else:
-            return self._producer._get_imdframe()
+            try:
+                return self._producer._get_imdframe()
+            except EOFError:
+                self._disconnect()
+                raise EOFError
 
     def get_imdsessioninfo(self):
         return self._imdsinfo
 
     def stop(self):
         if self._multithreaded:
-            self._buf.notify_consumer_finished()
+            if not self._stopped:
+                self._buf.notify_consumer_finished()
+                # NOTE: fix producer thread to catch errors
+                # where socket is disconnected by this thread
+                # rather than generic expection
+                self._disconnect()
+                self._stopped = True
         else:
-            self._producer._disconnect()
+            self._disconnect()
 
     def _connect_to_server(self, host, port, socket_bufsize):
         """
@@ -124,7 +149,7 @@ class IMDClient:
             )
         return conn
 
-    def _await_IMD_handshake(self, conn) -> IMDSessionInfo:
+    def _await_IMD_handshake(self) -> IMDSessionInfo:
         """
         Wait for the server to send a handshake packet, then determine
         IMD session information.
@@ -134,7 +159,7 @@ class IMDClient:
 
         h_buf = bytearray(IMDHEADERSIZE)
         try:
-            read_into_buf(conn, h_buf)
+            read_into_buf(self._conn, h_buf)
         except EOFError:
             raise ConnectionError("IMDReader: No handshake received.")
 
@@ -176,20 +201,34 @@ class IMDClient:
             )
         elif ver == 3:
             data = bytearray(4)
-            read_into_buf(conn, data)
+            read_into_buf(self._conn, data)
             sinfo = parse_imdv3_session_info(data, end)
             logger.debug(f"IMDClient: Received IMDv3 session info: {sinfo}")
 
         return sinfo
 
-    def _go(self, conn):
+    def _go(self):
         """
         Send a go packet to the client to start the simulation
         and begin receiving data.
         """
         go = create_header_bytes(IMDHeaderType.IMD_GO, 0)
-        conn.sendall(go)
+        self._conn.sendall(go)
         logger.debug("IMDClient: Sent go packet to server")
+
+    def _disconnect(self):
+        # MUST disconnect before stopping execution
+        # if simulation already ended, this method will do nothing
+        try:
+            disconnect = create_header_bytes(IMDHeaderType.IMD_DISCONNECT, 0)
+            self._conn.sendall(disconnect)
+            logger.debug("IMDProducer: Disconnected from server")
+        except (ConnectionResetError, BrokenPipeError):
+            logger.debug(
+                f"IMDProducer: Attempted to disconnect but server already terminated the connection"
+            )
+        finally:
+            self._conn.close()
 
 
 class BaseIMDProducer(threading.Thread):
@@ -202,7 +241,7 @@ class BaseIMDProducer(threading.Thread):
         n_atoms,
         multithreaded,
     ):
-        super(BaseIMDProducer, self).__init__()
+        super(BaseIMDProducer, self).__init__(daemon=True)
         self._conn = conn
         self._imdsinfo = sinfo
         self._paused = False
@@ -249,10 +288,8 @@ class BaseIMDProducer(threading.Thread):
         try:
             self._parse_imdframe()
         except EOFError as e:
-            self._disconnect()
-            raise
+            raise EOFError
         except Exception as e:
-            self._disconnect()
             raise RuntimeError("An unexpected error occurred") from e
 
         return self._imdf
@@ -261,19 +298,24 @@ class BaseIMDProducer(threading.Thread):
         logger.debug("IMDProducer: Starting run loop")
         try:
             while True:
+                logger.debug("IMDProducer: Checking for pause")
+
                 if not self._paused:
+                    logger.debug("IMDProducer: Not paused")
                     if self._buf.is_full():
                         self._pause()
                         self._paused = True
 
+                logger.debug("IMDProducer: Checking for unpause")
+
                 if self._paused:
+                    logger.debug("IMDProducer: Paused")
                     # wait for socket to empty before unpausing
                     if not sock_contains_data(self._conn, 0):
+                        logger.debug("IMDProducer: Checked sock for data")
                         self._buf.wait_for_space()
                         self._unpause()
                         self._paused = False
-
-                logger.debug("IMDProducer: Getting empty frame ")
 
                 self._imdf = self._buf.pop_empty_imdframe()
 
@@ -283,6 +325,8 @@ class BaseIMDProducer(threading.Thread):
 
                 self._buf.push_full_imdframe(self._imdf)
 
+                logger.debug("IMDProducer: Pushed full frame")
+
                 self._frame += 1
         except EOFError:
             # Don't raise error if simulation ended in a way
@@ -290,22 +334,14 @@ class BaseIMDProducer(threading.Thread):
             # i.e. consumer stopped or read_into_buf didn't find
             # full token of data
             logger.debug("IMDProducer: Simulation ended normally, cleaning up")
-
-            # Tell reader not to expect more frames to be added
-            self._buf.notify_producer_finished()
-            # MUST disconnect before stopping run loop
-            # if simulation already ended, this method will do nothing
-            self._disconnect()
-            return
         except Exception as e:
             # If an unexpected error occurs, disconnect and raise
             # the error
-            logger.debug("IMDProducer: An unexpected error occurred: ", e)
-            self._disconnect()
+            logger.debug("IMDProducer: An unexpected error occurred: %s", e)
+        finally:
+            logger.debug("IMDProducer: Stopping run loop")
+            # Tell reader not to expect more frames to be added
             self._buf.notify_producer_finished()
-            raise RuntimeError(
-                "IMDProducer: An unexpected error occurred"
-            ) from e
 
     def _expect_header(self, expected_type, expected_value=None):
 
@@ -326,18 +362,6 @@ class BaseIMDProducer(threading.Thread):
     def _get_header(self):
         read_into_buf(self._conn, self._header)
         return IMDHeader(self._header)
-
-    def _disconnect(self):
-        try:
-            disconnect = create_header_bytes(IMDHeaderType.IMD_DISCONNECT, 0)
-            self._conn.sendall(disconnect)
-            logger.debug("IMDProducer: Disconnected from server")
-        except (ConnectionResetError, BrokenPipeError):
-            logger.debug(
-                f"IMDProducer: Attempted to disconnect but server already terminated the connection"
-            )
-        finally:
-            self._conn.close()
 
 
 class IMDProducerV2(BaseIMDProducer):
@@ -418,7 +442,7 @@ class IMDProducerV2(BaseIMDProducer):
             self._conn.sendall(pause)
         except ConnectionResetError as e:
             # Simulation has already ended by the time we paused
-            raise IndexError
+            raise EOFError
         # Edge case: pause occured in the time between server sends its last frame
         # and closing socket
         # Simulation is not actually paused but is over, but we still want to read remaining data
@@ -434,7 +458,7 @@ class IMDProducerV2(BaseIMDProducer):
             # Edge case: pause occured in the time between server sends its last frame
             # and closing socket
             # Simulation was never actually paused in this case and is now over
-            raise IndexError
+            raise EOFError
         # Edge case: pause & unpause occured in the time between server sends its last frame and closing socket
         # in this case, the simulation isn't actually unpaused but over
 
@@ -455,7 +479,6 @@ class IMDProducerV3(BaseIMDProducer):
             n_atoms,
             multithreaded,
         )
-
         # The body of an x/v/f packet should contain
         # (4 bytes per float * 3 atoms * n_atoms) bytes
         xvf_bytes = 12 * n_atoms
@@ -480,7 +503,7 @@ class IMDProducerV3(BaseIMDProducer):
             self._conn.sendall(pause)
         except ConnectionResetError as e:
             # Simulation has already ended by the time we paused
-            raise IndexError
+            raise EOFError
         # Edge case: pause occured in the time between server sends its last frame
         # and closing socket
         # Simulation is not actually paused but is over, but we still want to read remaining data
@@ -496,17 +519,23 @@ class IMDProducerV3(BaseIMDProducer):
             # Edge case: pause occured in the time between server sends its last frame
             # and closing socket
             # Simulation was never actually paused in this case and is now over
-            raise IndexError
+            raise EOFError
         # Edge case: pause & unpause occured in the time between server sends its last frame and closing socket
         # in this case, the simulation isn't actually unpaused but over
 
     def _parse_imdframe(self):
         if self._imdsinfo.time:
             self._expect_header(IMDHeaderType.IMD_TIME)
+            # use header buf to hold time data sicnce it is also
+            # 8 bytes
             read_into_buf(self._conn, self._header)
             t = IMDTime(self._header, self._imdsinfo.endianness)
-            self._imdf.time = t.dt
-            self._imdf.dt = t.time
+            self._imdf.dt = t.dt
+            self._imdf.time = t.time
+
+            logger.debug(
+                f"IMDProducer: Time: {self._imdf.time}, dt: {self._imdf.dt}"
+            )
 
         if self._imdsinfo.energies:
             self._expect_header(IMDHeaderType.IMD_ENERGIES, expected_value=1)
@@ -553,6 +582,9 @@ class IMDProducerV3(BaseIMDProducer):
                     self._forces, dtype=f"{self._imdsinfo.endianness}f"
                 ).reshape((self._n_atoms, 3)),
             )
+
+    def __del__(self):
+        logger.debug("IMDProducer: I am being deleted")
 
 
 class IMDFrameBuffer:
@@ -611,6 +643,7 @@ class IMDFrameBuffer:
         self._frame = 0
 
     def is_full(self):
+        logger.debug("IMDFrameBuffer: Checking if full")
         if (
             self._empty_q.qsize() / self._total_imdf
             <= self._pause_empty_proportion
@@ -623,22 +656,39 @@ class IMDFrameBuffer:
         return False
 
     def wait_for_space(self):
-        with self._empty_imdf_avail:
-            while (
-                self._empty_q.qsize() / self._total_imdf
-                < self._unpause_empty_proportion
-            ) and not self._consumer_finished:
-                self._empty_imdf_avail.wait()
+        logger.debug("IMDProducer: Waiting for space in buffer")
 
-        if self._consumer_finished:
-            raise EOFError
+        try:
+            with self._empty_imdf_avail:
+                while (
+                    self._empty_q.qsize() / self._total_imdf
+                    < self._unpause_empty_proportion
+                ) and not self._consumer_finished:
+                    logger.debug("IMDProducer: Waiting...")
+                    logger.debug(
+                        f"IMDProducer: consumer_finished: {self._consumer_finished}"
+                    )
+                    self._empty_imdf_avail.wait()
+
+            logger.debug(
+                "IMDProducer: Got space in buffer or consumer finished"
+            )
+
+            if self._consumer_finished:
+                logger.debug("IMDProducer: Noticing consumer finished")
+                raise EOFError
+        except Exception as e:
+            logger.debug(f"IMDProducer: Error waiting for space in buffer:")
+            logger.debug(f"IMDProducer: Error waiting for space in buffer: {e}")
 
     def pop_empty_imdframe(self):
+        logger.debug("IMDProducer: Getting empty frame")
         with self._empty_imdf_avail:
             while self._empty_q.qsize() == 0 and not self._consumer_finished:
                 self._empty_imdf_avail.wait()
 
         if self._consumer_finished:
+            logger.debug("IMDProducer: Noticing consumer finished")
             raise EOFError
 
         imdf = self._empty_q.get()
@@ -654,7 +704,6 @@ class IMDFrameBuffer:
         """Put empty_ts in the empty_q and get the next full timestep"""
         # Start timer- one frame of analysis is starting (including removal
         # from buffer)
-
         self._t1 = self._t2
         self._t2 = time.time()
 
@@ -670,33 +719,29 @@ class IMDFrameBuffer:
                 self._full_imdf_avail.wait()
 
         if self._producer_finished and self._full_q.qsize() == 0:
-            logger.debug("IMDReader: Producer finished")
+            logger.debug("IMDFrameBuffer(Consumer): Producer finished")
             raise EOFError
 
         imdf = self._full_q.get()
-
-        logger.debug(
-            f"IMDFrameBuffer: positions for frame {self._frame}: {imdf.positions}"
-        )
 
         self._prev_empty_imdf = imdf
 
         if self._t1 is not None:
             logger.debug(
-                f"IMDReader: Frame #{self._frame} analyzed in {self._t2 - self._t1} seconds"
+                f"IMDFrameBuffer(Consumer): Frame #{self._frame} analyzed in {self._t2 - self._t1} seconds"
             )
         self._frame += 1
 
         return imdf
 
     def notify_producer_finished(self):
-        self._producer_finished = True
         with self._full_imdf_avail:
+            self._producer_finished = True
             self._full_imdf_avail.notify()
 
     def notify_consumer_finished(self):
-        self._consumer_finished = True
         with self._empty_imdf_avail:
+            self._consumer_finished = True
             # noop if producer isn't waiting
             self._empty_imdf_avail.notify()
 

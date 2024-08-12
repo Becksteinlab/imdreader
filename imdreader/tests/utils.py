@@ -251,6 +251,20 @@ def create_default_imdsinfo_v2():
     )
 
 
+def create_default_imdsinfo_v3():
+    return IMDSessionInfo(
+        version=3,
+        endianness="<",
+        time=1,
+        energies=1,
+        box=1,
+        positions=1,
+        velocities=1,
+        forces=1,
+        wrapped_coords=1,
+    )
+
+
 class DummyIMDServer(threading.Thread):
     """Performs the following steps in order:
 

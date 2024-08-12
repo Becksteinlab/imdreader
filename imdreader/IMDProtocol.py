@@ -145,6 +145,19 @@ def parse_imdv3_session_info(data, end):
     return imdsinfo
 
 
+def create_imdv3_session_info_bytes(imdsinfo: IMDSessionInfo):
+    """Creates the session information packet of an IMD v3 connection"""
+    body = 0
+    body |= imdsinfo.time << 0
+    body |= imdsinfo.energies << 1
+    body |= imdsinfo.box << 2
+    body |= imdsinfo.positions << 3
+    body |= imdsinfo.velocities << 4
+    body |= imdsinfo.forces << 5
+    body |= imdsinfo.wrapped_coords << 6
+    return struct.pack("!i", body)
+
+
 def create_header_bytes(msg_type: IMDHeaderType, length: int):
     # NOTE: add error checking for invalid packet msg_type here
 
