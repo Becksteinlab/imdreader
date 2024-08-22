@@ -157,6 +157,8 @@ class IMDClient:
         end = ">"
         ver = None
 
+        self._conn.settimeout(5)
+
         h_buf = bytearray(IMDHEADERSIZE)
         try:
             read_into_buf(self._conn, h_buf)
@@ -199,8 +201,19 @@ class IMDClient:
                 velocities=False,
                 forces=False,
             )
+
         elif ver == 3:
-            data = bytearray(4)
+            read_into_buf(self._conn, h_buf)
+            header = IMDHeader(h_buf)
+            if header.type != IMDHeaderType.IMD_SESSIONINFO:
+                raise ValueError(
+                    f"Expected header type `IMD_SESSIONINFO`, got {header.type}"
+                )
+            if header.length != 7:
+                raise ValueError(
+                    f"Expected header length 7, got {header.length}"
+                )
+            data = bytearray(7)
             read_into_buf(self._conn, data)
             sinfo = parse_imdv3_session_info(data, end)
             logger.debug(f"IMDClient: Received IMDv3 session info: {sinfo}")
@@ -658,6 +671,12 @@ class IMDFrameBuffer:
     def wait_for_space(self):
         logger.debug("IMDProducer: Waiting for space in buffer")
 
+        # Before acquiring the lock, check if we can return immediately
+        if (
+            self._empty_q.qsize() / self._total_imdf
+            >= self._unpause_empty_proportion
+        ) and not self._consumer_finished:
+            return
         try:
             with self._empty_imdf_avail:
                 while (
@@ -678,11 +697,16 @@ class IMDFrameBuffer:
                 logger.debug("IMDProducer: Noticing consumer finished")
                 raise EOFError
         except Exception as e:
-            logger.debug(f"IMDProducer: Error waiting for space in buffer:")
             logger.debug(f"IMDProducer: Error waiting for space in buffer: {e}")
 
     def pop_empty_imdframe(self):
         logger.debug("IMDProducer: Getting empty frame")
+
+        # If there are empty frames available, don't wait
+        if self._empty_q.qsize() and not self._consumer_finished:
+            return self._empty_q.get()
+
+        # If there are no empty frames available, wait for one
         with self._empty_imdf_avail:
             while self._empty_q.qsize() == 0 and not self._consumer_finished:
                 self._empty_imdf_avail.wait()
@@ -691,11 +715,11 @@ class IMDFrameBuffer:
             logger.debug("IMDProducer: Noticing consumer finished")
             raise EOFError
 
-        imdf = self._empty_q.get()
-
-        return imdf
+        return self._empty_q.get()
 
     def push_full_imdframe(self, imdf):
+        # If the full q is empty, the consumer is waiting
+        # and needs to be awakened
         self._full_q.put(imdf)
         with self._full_imdf_avail:
             self._full_imdf_avail.notify()
@@ -714,15 +738,19 @@ class IMDFrameBuffer:
                 self._empty_imdf_avail.notify()
 
         # Get the next IMDFrame
-        with self._full_imdf_avail:
-            while self._full_q.qsize() == 0 and not self._producer_finished:
-                self._full_imdf_avail.wait()
+        imdf = None
+        if self._full_q.qsize() and not self._consumer_finished:
+            imdf = self._full_q.get()
+        else:
+            with self._full_imdf_avail:
+                while self._full_q.qsize() == 0 and not self._producer_finished:
+                    self._full_imdf_avail.wait()
 
-        if self._producer_finished and self._full_q.qsize() == 0:
-            logger.debug("IMDFrameBuffer(Consumer): Producer finished")
-            raise EOFError
+            if self._producer_finished and self._full_q.qsize() == 0:
+                logger.debug("IMDFrameBuffer(Consumer): Producer finished")
+                raise EOFError
 
-        imdf = self._full_q.get()
+            imdf = self._full_q.get()
 
         self._prev_empty_imdf = imdf
 
@@ -735,13 +763,13 @@ class IMDFrameBuffer:
         return imdf
 
     def notify_producer_finished(self):
+        self._producer_finished = True
         with self._full_imdf_avail:
-            self._producer_finished = True
             self._full_imdf_avail.notify()
 
     def notify_consumer_finished(self):
+        self._consumer_finished = True
         with self._empty_imdf_avail:
-            self._consumer_finished = True
             # noop if producer isn't waiting
             self._empty_imdf_avail.notify()
 

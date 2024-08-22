@@ -70,14 +70,29 @@ class InThreadIMDServer:
     def _send_handshakeV3(self):
         logger.debug(f"InThreadIMDServer: Sending handshake V3")
         packet = struct.pack("!i", IMDHeaderType.IMD_HANDSHAKE.value)
-        logger.debug(f"InThreadIMDServer: 1")
-        logger.debug(f"IMDSessionInfo: {self.imdsinfo}")
         packet += struct.pack(f"{self.imdsinfo.endianness}i", 3)
-        logger.debug(f"InThreadIMDServer: 2")
-        packet += create_imdv3_session_info_bytes(self.imdsinfo)
-        logger.debug(f"InThreadIMDServer: 3")
         self.conn.sendall(packet)
-        logger.debug(f"InThreadIMDServer: Sent handshake V3")
+
+        sinfo = struct.pack("!ii", IMDHeaderType.IMD_SESSIONINFO.value, 7)
+        time = 1 if self.imdsinfo.time else 0
+        energies = 1 if self.imdsinfo.energies else 0
+        box = 1 if self.imdsinfo.box else 0
+        positions = 1 if self.imdsinfo.positions else 0
+        velocities = 1 if self.imdsinfo.velocities else 0
+        forces = 1 if self.imdsinfo.forces else 0
+        wrapped_coords = 0
+        sinfo += struct.pack(
+            f"{self.imdsinfo.endianness}BBBBBBB",
+            time,
+            energies,
+            box,
+            positions,
+            velocities,
+            forces,
+            wrapped_coords,
+        )
+        logger.debug(f"InThreadIMDServer: Sending session info")
+        self.conn.sendall(sinfo)
 
     def join_accept_thread(self):
         self.accept_thread.join()

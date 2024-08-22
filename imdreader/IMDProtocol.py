@@ -27,11 +27,12 @@ class IMDHeaderType(Enum):
     IMD_TRATE = 8
     IMD_IOERROR = 9
     # New in IMD v3
-    IMD_RESUME = 10
-    IMD_TIME = 11
-    IMD_BOX = 12
-    IMD_VELOCITIES = 13
-    IMD_FORCES = 14
+    IMD_SESSIONINFO = 10
+    IMD_RESUME = 11
+    IMD_TIME = 12
+    IMD_BOX = 13
+    IMD_VELOCITIES = 14
+    IMD_FORCES = 15
 
 
 def parse_energy_bytes(data, endianness):
@@ -128,20 +129,23 @@ class IMDSessionInfo:
 
 def parse_imdv3_session_info(data, end):
     """Parses the session information packet of an IMD v3 connection"""
-    logger.debug(f"IMDSessionInfo data: {data}")
-    body = struct.unpack(f"!i", data)[0]
-    logger.debug(f"IMDSessionInfo body: {body}")
+    logger.debug(f"parse_imdv3_session_info: {data}")
+    time, energies, box, positions, velocties, forces, wrapped_coords = (
+        struct.unpack(f"{end}BBBBBBB", data)
+    )
+    logger.debug(f"parse_imdv3_session_info2 : {data}")
     imdsinfo = IMDSessionInfo(
         version=3,
         endianness=end,
-        time=(body >> 0 & 1),
-        energies=(body >> 1 & 1),
-        box=(body >> 2 & 1),
-        positions=(body >> 3 & 1),
-        velocities=(body >> 4 & 1),
-        forces=(body >> 5 & 1),
-        wrapped_coords=(body >> 6 & 1),
+        time=(time == 1),
+        energies=(energies == 1),
+        box=(box == 1),
+        positions=(positions == 1),
+        velocities=(velocties == 1),
+        forces=(forces == 1),
+        wrapped_coords=(wrapped_coords == 1),
     )
+    logger.debug(f"parse_imdv3_session_info3: {data}")
     return imdsinfo
 
 
