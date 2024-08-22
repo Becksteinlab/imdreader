@@ -109,5 +109,5 @@ ENV/
 poetry.lock
 
 # debugging
-
-tmp
+# uncomment me when ready for production
+# tmp
