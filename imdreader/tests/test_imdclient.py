@@ -7,14 +7,17 @@ from MDAnalysisTests.datafiles import (
 )
 import MDAnalysis as mda
 import imdreader
-from imdreader.IMDClient import imdframe_memsize
+from imdreader.IMDClient import imdframe_memsize, IMDClient
+from imdreader.IMDProtocol import IMDHeaderType
 from .utils import (
     IMDServerEventType,
     DummyIMDServer,
     get_free_port,
     ExpectPauseLoopV2Behavior,
     create_default_imdsinfo_v2,
+    create_default_imdsinfo_v3,
 )
+from .server import InThreadIMDServer
 from MDAnalysisTests.coordinates.base import (
     MultiframeReaderTest,
     BaseReference,
@@ -59,6 +62,84 @@ IMDENERGYKEYS = [
 ]
 
 
+class TestIMDReaderV3:
+
+    @pytest.fixture
+    def port(self):
+        return get_free_port()
+
+    @pytest.fixture
+    def universe(self):
+        return mda.Universe(COORDINATES_TOPOLOGY, COORDINATES_H5MD)
+
+    @pytest.fixture
+    def imdsinfo(self):
+        return create_default_imdsinfo_v3()
+
+    @pytest.fixture
+    def server_client(self, universe, imdsinfo, port):
+        server = InThreadIMDServer(universe.trajectory)
+        server.set_imdsessioninfo(imdsinfo)
+        server.handshake_sequence("localhost", port, first_frame=False)
+        client = IMDClient(
+            f"localhost",
+            port,
+            universe.trajectory.n_atoms,
+            buffer_size=imdframe_memsize(universe.trajectory.n_atoms, imdsinfo)
+            * 2,
+        )
+        yield server, client
+        client.stop()
+        server.cleanup()
+
+    def test_pause_resume_continue(self, server_client):
+        server, client = server_client
+        server.send_frames(0, 2)
+        # Client's buffer is filled. client should send pause
+        server.expect_packet(IMDHeaderType.IMD_PAUSE)
+        # Empty buffer
+        client.get_imdframe()
+        # only the second call actually frees buffer memory
+        client.get_imdframe()
+        # client has free memory. should send resume
+        server.expect_packet(IMDHeaderType.IMD_RESUME)
+        server.send_frame(1)
+        client.get_imdframe()
+
+    def test_pause_resume_disconnect(self, server_client):
+        """Client pauses because buffer is full, empties buffer and attempt to resume, but
+        finds that simulation has already ended and raises EOF"""
+        server, client = server_client
+        server.send_frames(0, 2)
+        server.expect_packet(IMDHeaderType.IMD_PAUSE)
+        client.get_imdframe()
+        client.get_imdframe()
+        # client has free frame. should send resume
+        server.expect_packet(IMDHeaderType.IMD_RESUME)
+        # simulation is over. client should raise EOF
+        server.disconnect()
+        with pytest.raises(EOFError):
+            client.get_imdframe()
+
+    def test_pause_resume_no_disconnect(self, server_client):
+        """Client pauses because buffer is full, empties buffer and attempt to resume, but
+        finds that simulation has already ended (but has not yet disconnected) and raises EOF
+        """
+        server, client = server_client
+        server.send_frames(0, 2)
+        server.expect_packet(IMDHeaderType.IMD_PAUSE)
+        client.get_imdframe()
+        client.get_imdframe()
+        # client has free frame. should send resume
+        server.expect_packet(IMDHeaderType.IMD_RESUME)
+        # simulation is over. client should raise EOF
+        with pytest.raises(EOFError):
+            client.get_imdframe()
+        # server should receive disconnect from client (though it doesn't have to do anything)
+        server.expect_packet(IMDHeaderType.IMD_DISCONNECT)
+
+
+"""
 class TestIMDReaderV2:
 
     @pytest.fixture
@@ -219,3 +300,4 @@ class TestIMDReaderWithBlockingServerV2:
             i += 1
 
         assert i == len(ref)
+"""

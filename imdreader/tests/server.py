@@ -33,18 +33,23 @@ class InThreadIMDServer:
     def set_imdsessioninfo(self, imdsinfo):
         self.imdsinfo = imdsinfo
 
-    def listen_accept_handshake_send_ts(self, host, port):
+    def handshake_sequence(self, host, port, first_frame=True):
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.bind((host, port))
         logger.debug(f"InThreadIMDServer: Listening on {host}:{port}")
         s.listen(60)
         self.listen_socket = s
-        self.accept_thread = threading.Thread(
-            target=self._accept_handshake_send_ts,
-        )
+        if first_frame:
+            self.accept_thread = threading.Thread(
+                target=self._accept_handshake_send_ts,
+            )
+        else:
+            self.accept_thread = threading.Thread(target=self._accept_handshake)
         self.accept_thread.start()
 
     def _accept_handshake_send_ts(self):
+        """Accepts the connection, sends the handshake & imdsessionfo, and sends the first frame
+        For testing IMDReader integration"""
         logger.debug(f"InThreadIMDServer: Entering accept thread")
         waited = 0
 
@@ -57,6 +62,25 @@ class InThreadIMDServer:
                 self._send_handshakeV3()
             self._expect_go()
             self.send_frame(0)
+            return
+        else:
+            # IMDReader will fail out if it fails to connect
+            return
+
+    def _accept_handshake(self):
+        """Accepts the connection and sends the handshake & imdsessionfo. For testing IMDClient directly"""
+        waited = 0
+
+        if sock_contains_data(self.listen_socket, 5):
+            logger.debug(f"InThreadIMDServer: Accepting connection")
+            self.conn, _ = self.listen_socket.accept()
+            # NOTE: may need to reorganize this
+            self.conn.settimeout(5)
+            if self.imdsinfo.version == 2:
+                self._send_handshakeV2()
+            elif self.imdsinfo.version == 3:
+                self._send_handshakeV3()
+            self.expect_packet(IMDHeaderType.IMD_GO)
             return
         else:
             # IMDReader will fail out if it fails to connect
@@ -115,7 +139,7 @@ class InThreadIMDServer:
         if self.imdsinfo.time:
             time_header = create_header_bytes(IMDHeaderType.IMD_TIME, 1)
             time = struct.pack(
-                f"{endianness}ff", self.traj[i].data["dt"], self.traj[i].time
+                f"{endianness}ff", self.traj[i].dt, self.traj[i].time
             )
 
             self.conn.sendall(time_header + time)
@@ -175,6 +199,19 @@ class InThreadIMDServer:
             ).tobytes()
 
             self.conn.sendall(force_header + force)
+
+    def expect_packet(self, packet_type, expected_length=None):
+        head_buf = bytearray(IMDHEADERSIZE)
+        read_into_buf(self.conn, head_buf)
+        header = IMDHeader(head_buf)
+        if header.type != packet_type:
+            raise ValueError(
+                f"Expected {packet_type} packet, got {header.type}"
+            )
+        if expected_length is not None and header.length != expected_length:
+            raise ValueError(
+                f"Expected packet length {expected_length}, got {header.length}"
+            )
 
     def disconnect(self):
         self.conn.shutdown(socket.SHUT_RD)

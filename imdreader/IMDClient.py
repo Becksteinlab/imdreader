@@ -123,9 +123,6 @@ class IMDClient:
         if self._multithreaded:
             if not self._stopped:
                 self._buf.notify_consumer_finished()
-                # NOTE: fix producer thread to catch errors
-                # where socket is disconnected by this thread
-                # rather than generic expection
                 self._disconnect()
                 self._stopped = True
         else:
@@ -235,7 +232,7 @@ class IMDClient:
         try:
             disconnect = create_header_bytes(IMDHeaderType.IMD_DISCONNECT, 0)
             self._conn.sendall(disconnect)
-            logger.debug("IMDProducer: Disconnected from server")
+            logger.debug("IMDClient: Disconnected from server")
         except (ConnectionResetError, BrokenPipeError):
             logger.debug(
                 f"IMDProducer: Attempted to disconnect but server already terminated the connection"

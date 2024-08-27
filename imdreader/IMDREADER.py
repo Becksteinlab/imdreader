@@ -67,12 +67,6 @@ logger = logging.getLogger(__name__)
 class IMDReader(ReaderBase):
     """
     Reader for IMD protocol packets.
-
-    Default buffer size is set to 8MB for testing
-    Buffer_size kwarg is in bytes
-
-    We are assuming the header will never be sent without the body as in the sample code.
-    If this assumption is violated, the producer thread can cause a deadlock.
     """
 
     format = "IMD"
@@ -171,11 +165,11 @@ class IMDReader(ReaderBase):
         if imdf.positions is not None:
             # must call copy because reference is expected to reset
             # see 'test_frame_collect_all_same' in MDAnalysisTests.coordinates.base
-            self.ts.positions = imdf.positions.copy()
+            self.ts.positions = imdf.positions
         if imdf.velocities is not None:
-            self.ts.velocities = imdf.velocities.copy()
+            self.ts.velocities = imdf.velocities
         if imdf.forces is not None:
-            self.ts.forces = imdf.forces.copy()
+            self.ts.forces = imdf.forces
 
     @property
     def n_frames(self):
