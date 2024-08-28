@@ -126,7 +126,7 @@ class TestIMDReaderBaseAPI(MultiframeReaderTest):
     def transformed(self, ref):
         # This will start the test IMD Server, waiting for a connection
         # to then send handshake & first frame
-        ref.server.listen_accept_handshake_send_ts("localhost", ref.port)
+        ref.server.handshake_sequence("localhost", ref.port)
         # This will connect to the test IMD Server and read the first frame
         transformed = ref.reader(ref.trajectory, n_atoms=ref.n_atoms)
         # Send the rest of the frames- small enough to all fit in socket itself
