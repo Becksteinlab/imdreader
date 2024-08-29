@@ -61,6 +61,7 @@ class IMDClient:
                 n_atoms,
                 pause_empty_proportion,
                 unpause_empty_proportion,
+                **kwargs,
             )
         else:
             self._buf = None
@@ -71,6 +72,7 @@ class IMDClient:
                 self._imdsinfo,
                 n_atoms,
                 multithreaded,
+                **kwargs,
             )
         elif self._imdsinfo.version == 3:
             self._producer = IMDProducerV3(
@@ -79,6 +81,7 @@ class IMDClient:
                 self._imdsinfo,
                 n_atoms,
                 multithreaded,
+                **kwargs,
             )
 
         self._go()
