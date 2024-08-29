@@ -239,15 +239,12 @@ def create_default_imdsinfo_v2():
     return IMDSessionInfo(
         version=2,
         endianness="<",
-        imdterm=None,
-        imdwait=None,
-        imdpull=None,
         wrapped_coords=True,
-        energies=1,
-        dimensions=0,
-        positions=1,
-        velocities=0,
-        forces=0,
+        energies=True,
+        box=False,
+        positions=True,
+        velocities=False,
+        forces=False,
     )
 
 
@@ -406,37 +403,6 @@ class DummyIMDServer(threading.Thread):
     @property
     def event_q(self):
         return self._event_q
-
-
-def recvuntil(file_path, target_line, timeout):
-    """
-    Read from the file until the target line is found or the timeout occurs.
-
-    Args:
-        file_path (str): The path to the file to read from.
-        target_line (str): The line to wait for.
-        timeout (float): The timeout in seconds.
-
-    Returns:
-        str: The line containing the target line.
-
-    Raises:
-        TimeoutError: If the target line is not found within the timeout period.
-    """
-    end_time = time.time() + timeout
-    buffer = ""
-
-    while time.time() < end_time:
-        time.sleep(0.1)  # Small delay to avoid busy-waiting
-        with open(file_path, "r") as f:
-            lines = f.readlines()
-            for line in lines:
-                buffer += line
-                if target_line in line:
-                    return line
-    raise TimeoutError(
-        f"Timeout after {timeout} seconds waiting for '{target_line}'"
-    )
 
 
 def get_free_port():
