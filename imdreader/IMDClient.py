@@ -246,7 +246,7 @@ class IMDClient:
 
 class BaseIMDProducer(threading.Thread):
 
-    def __init__(self, conn, buffer, sinfo, n_atoms, multithreaded, timeout=5):
+    def __init__(self, conn, buffer, sinfo, n_atoms, multithreaded, timeout=5, **kwargs):
         super(BaseIMDProducer, self).__init__(daemon=True)
         self._conn = conn
         self._imdsinfo = sinfo
@@ -378,6 +378,7 @@ class IMDProducerV2(BaseIMDProducer):
         sinfo,
         n_atoms,
         multithreaded,
+        **kwargs,
     ):
         super(IMDProducerV2, self).__init__(
             conn,
@@ -385,6 +386,7 @@ class IMDProducerV2(BaseIMDProducer):
             sinfo,
             n_atoms,
             multithreaded,
+            **kwargs,
         )
 
         self._energies = bytearray(IMDENERGYPACKETLENGTH)
@@ -477,6 +479,7 @@ class IMDProducerV3(BaseIMDProducer):
         sinfo,
         n_atoms,
         multithreaded,
+        **kwargs,
     ):
         super(IMDProducerV3, self).__init__(
             conn,
@@ -484,6 +487,7 @@ class IMDProducerV3(BaseIMDProducer):
             sinfo,
             n_atoms,
             multithreaded,
+            **kwargs,
         )
         # The body of an x/v/f packet should contain
         # (4 bytes per float * 3 atoms * n_atoms) bytes
@@ -606,6 +610,7 @@ class IMDFrameBuffer:
         n_atoms,
         pause_empty_proportion,
         unpause_empty_proportion,
+        **kwargs,
     ):
 
         # Syncing reader and producer
