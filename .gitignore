@@ -108,6 +108,4 @@ ENV/
 # poetry
 poetry.lock
 
-# debugging
-# uncomment me when ready for production
-# tmp
+tmp
