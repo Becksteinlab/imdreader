@@ -243,14 +243,7 @@ class IMDClient:
 
 class BaseIMDProducer(threading.Thread):
 
-    def __init__(
-        self,
-        conn,
-        buffer,
-        sinfo,
-        n_atoms,
-        multithreaded,
-    ):
+    def __init__(self, conn, buffer, sinfo, n_atoms, multithreaded, timeout=5):
         super(BaseIMDProducer, self).__init__(daemon=True)
         self._conn = conn
         self._imdsinfo = sinfo
@@ -258,7 +251,7 @@ class BaseIMDProducer(threading.Thread):
 
         # Timeout for first frame should be longer
         # than rest of frames
-        self._timeout = 5
+        self._timeout = timeout
         self._conn.settimeout(self._timeout)
 
         self._buf = buffer
@@ -535,7 +528,7 @@ class IMDProducerV3(BaseIMDProducer):
 
     def _parse_imdframe(self):
         if self._imdsinfo.time:
-            self._expect_header(IMDHeaderType.IMD_TIME)
+            self._expect_header(IMDHeaderType.IMD_TIME, expected_value=1)
             # use header buf to hold time data sicnce it is also
             # 8 bytes
             read_into_buf(self._conn, self._header)
@@ -554,7 +547,7 @@ class IMDProducerV3(BaseIMDProducer):
                 parse_energy_bytes(self._energies, self._imdsinfo.endianness)
             )
         if self._imdsinfo.box:
-            self._expect_header(IMDHeaderType.IMD_BOX)
+            self._expect_header(IMDHeaderType.IMD_BOX, expected_value=1)
             read_into_buf(self._conn, self._box)
             self._imdf.box = parse_box_bytes(
                 self._box, self._imdsinfo.endianness
