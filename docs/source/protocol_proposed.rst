@@ -17,16 +17,16 @@ The suggested changes to the protocol are as follows:
         4 (int32) (IMD_HANDSHAKE)
         2 (int32) (Protocol version, must be unswapped so client can determine endianness)
     Body:
-        <val> (bit) (imdpull: true or false)
-        <val> (bit) (imdwait: true or false)
-        <val> (bit) (imdterm: true or false)
+        <val> (bit) (imdpull: true or false. if true, the client can input forces to the simulation)
+        <val> (bit) (imdwait: true or false. if true, the simulation will wait for the client to send a go signal before starting)
+        <val> (bit) (imdterm: true or false. if true, the client can terminate the simulation)
         <val> (bit) (wrapped positions: true or false. if positions rate is 0, this is a placeholder value)
 
-        <val> (int32) (energies rate: number of steps that elapse between steps that contain energy data. 0 means never)
-        <val> (int32) (dimensions rate: number of steps that elapse between steps that contain dimension data. 0 means never)
-        <val> (int32) (positions rate: number of steps that elapse between steps that contain position data. 0 means never)
-        <val> (int32) (velocities rate: number of steps that elapse between steps that contain velocity data. 0 means never)
-        <val> (int32) (forces rate: number of steps that elapse between steps that contain force data. 0 means never)
+        <val> (uint32) (energies rate: number of steps that elapse between steps that contain energy data. 0 means never)
+        <val> (uint32) (dimensions rate: number of steps that elapse between steps that contain dimension data. 0 means never)
+        <val> (uint32) (positions rate: number of steps that elapse between steps that contain position data. 0 means never)
+        <val> (uint32) (velocities rate: number of steps that elapse between steps that contain velocity data. 0 means never)
+        <val> (uint32) (forces rate: number of steps that elapse between steps that contain force data. 0 means never)
 
    "wrapped positions" will be a new ``.mdp`` setting which specifies whether the atoms' positions
    should be adjusted to fit within the simulation box before sending. This is useful for visualization purposes.

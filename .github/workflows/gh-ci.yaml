@@ -39,7 +39,7 @@ jobs:
           release: "latest"
 
   main-tests:
-    if: "github.repository == 'becksteinlab/imdreader'"
+    if: github.repository == 'becksteinlab/imdreader'
     needs: environment-config
     runs-on: ${{ matrix.os }}
     strategy:
@@ -58,6 +58,9 @@ jobs:
         df -h
         ulimit -a
 
+    - name: Set architecture
+      id: set-arch
+      run: echo "ARCHITECTURE=$(if [[ '${{ matrix.os }}' == 'macOS-latest' ]]; then echo 'arm64'; else echo 'x64'; fi)" >> $GITHUB_ENV
 
     # More info on options: https://github.com/conda-incubator/setup-miniconda
     - name: Install conda dependencies
@@ -66,7 +69,7 @@ jobs:
         python-version: ${{ matrix.python-version }}
         environment-file: devtools/conda-envs/test_env.yaml
         add-pip-as-python-dependency: true
-        architecture: x64
+        architecture: ${{ env.ARCHITECTURE }}
 
         channels: conda-forge, defaults
 
@@ -113,7 +116,7 @@ jobs:
 
 
   pylint_check:
-    if: "github.repository == 'becksteinlab/imdreader'"
+    if: github.repository == 'becksteinlab/imdreader'
     needs: environment-config
     runs-on: ubuntu-latest
 
@@ -139,7 +142,7 @@ jobs:
 
 
   pypi_check:
-    if: "github.repository == 'becksteinlab/imdreader'"
+    if: github.repository == 'becksteinlab/imdreader'
     needs: environment-config
     runs-on: ubuntu-latest
 

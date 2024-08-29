@@ -1,45 +1,39 @@
+"""Test for MDAnalysis trajectory reader expectations
 """
-Unit and regression test for the imdreader package.
-"""
 
-# Import package, test suite, and other packages as needed
-import imdreader
-from imdreader.tests.datafiles import *
-from .utils import *
-
-import pytest
-from numpy.testing import assert_allclose
-
+from MDAnalysisTests.datafiles import (
+    COORDINATES_TOPOLOGY,
+    COORDINATES_TRR,
+    COORDINATES_H5MD,
+)
 import MDAnalysis as mda
-from MDAnalysisTests.coordinates.base import assert_timestep_almost_equal
-
-import sys
-import threading
+import imdreader
+from imdreader.IMDClient import imdframe_memsize
+from .utils import (
+    IMDServerEventType,
+    DummyIMDServer,
+    get_free_port,
+    ExpectPauseLoopV2Behavior,
+    create_default_imdsinfo_v3,
+)
+from .server import InThreadIMDServer
+from MDAnalysisTests.coordinates.base import (
+    MultiframeReaderTest,
+    BaseReference,
+    BaseWriterTest,
+    assert_timestep_almost_equal,
+)
+from numpy.testing import (
+    assert_almost_equal,
+    assert_array_almost_equal,
+    assert_equal,
+    assert_allclose,
+)
+import numpy as np
 import logging
-import subprocess
-
-"""
-mdout generated using 
-gmx grompp -f md.mdp -c argon_start.pdb -p argon.top
-
-gmx mdrun -s topol.tpr
-
-"""
-
-"""
-"-imdwait", "-imdpull", "-imdterm"
-"""
-"""
-gmx output w imd:
-IMD: Enabled. This simulation will accept incoming IMD connections.
-IMD: Pausing simulation while no IMD connection present (-imdwait).
-IMD: Allow termination of the simulation from IMD client (-imdterm).
-IMD: Pulling from IMD remote is enabled (-imdpull).
-IMD: Setting port for connection requests to 8888.
-IMD: Setting up incoming socket.
-IMD: Listening for IMD connection on port 8888.
-IMD: Will wait until I have a connection and IMD_GO orders.
-"""
+import pytest
+from MDAnalysis.transformations import translate
+import pickle
 
 
 @pytest.fixture(autouse=True)
@@ -56,162 +50,488 @@ def log_config():
     logger.removeHandler(file_handler)
 
 
-@pytest.fixture(scope="function")
-def run_gmx(tmpdir):
-    port = get_free_port()
-    command = [
-        "gmx",
-        "mdrun",
-        "-s",
-        TOPOL_TPR,
-        "-imdwait",
-        "-imdpull",
-        "-imdterm",
-        "-imdport",
-        str(port),
-    ]
-    with tmpdir.as_cwd():
-        with open("gmx_output.log", "w") as f:
-            p = subprocess.Popen(
-                command,
-                stdin=subprocess.PIPE,
-                stdout=f,
-                stderr=f,
-                text=True,
-                bufsize=1,
+class IMDReference(BaseReference):
+    def __init__(self):
+        super(IMDReference, self).__init__()
+        self.port = get_free_port()
+        # Serve TRR traj data via the server
+        traj = mda.coordinates.TRR.TRRReader(COORDINATES_TRR)
+        self.server = InThreadIMDServer(traj)
+        self.server.set_imdsessioninfo(create_default_imdsinfo_v3())
+
+        self.n_atoms = traj.n_atoms
+        self.prec = 3
+
+        self.trajectory = f"localhost:{self.port}"
+        self.topology = COORDINATES_TOPOLOGY
+        self.changing_dimensions = True
+        self.reader = imdreader.IMDReader
+
+        self.first_frame.velocities = self.first_frame.positions / 10
+        self.first_frame.forces = self.first_frame.positions / 100
+
+        self.second_frame.velocities = self.second_frame.positions / 10
+        self.second_frame.forces = self.second_frame.positions / 100
+
+        self.last_frame.velocities = self.last_frame.positions / 10
+        self.last_frame.forces = self.last_frame.positions / 100
+
+        self.jump_to_frame.velocities = self.jump_to_frame.positions / 10
+        self.jump_to_frame.forces = self.jump_to_frame.positions / 100
+
+    def iter_ts(self, i):
+        ts = self.first_frame.copy()
+        ts.positions = 2**i * self.first_frame.positions
+        ts.velocities = ts.positions / 10
+        ts.forces = ts.positions / 100
+        ts.time = i
+        ts.frame = i
+        return ts
+
+
+class TestIMDReaderBaseAPI(MultiframeReaderTest):
+
+    @pytest.fixture()
+    def ref(self):
+        """Not a static method like in base class- need new server for each test"""
+        return IMDReference()
+
+    @pytest.fixture()
+    def reader(self, ref):
+        # This will start the test IMD Server, waiting for a connection
+        # to then send handshake & first frame
+        ref.server.handshake_sequence("localhost", ref.port)
+        # This will connect to the test IMD Server and read the first frame
+        reader = ref.reader(ref.trajectory, n_atoms=ref.n_atoms)
+        # Send the rest of the frames- small enough to all fit in socket itself
+        ref.server.send_frames(1, 5)
+
+        reader.add_auxiliary(
+            "lowf",
+            ref.aux_lowf,
+            dt=ref.aux_lowf_dt,
+            initial_time=0,
+            time_selector=None,
+        )
+        reader.add_auxiliary(
+            "highf",
+            ref.aux_highf,
+            dt=ref.aux_highf_dt,
+            initial_time=0,
+            time_selector=None,
+        )
+        return reader
+
+    @pytest.fixture()
+    def transformed(self, ref):
+        # This will start the test IMD Server, waiting for a connection
+        # to then send handshake & first frame
+        ref.server.handshake_sequence("localhost", ref.port)
+        # This will connect to the test IMD Server and read the first frame
+        transformed = ref.reader(ref.trajectory, n_atoms=ref.n_atoms)
+        # Send the rest of the frames- small enough to all fit in socket itself
+        ref.server.send_frames(1, 5)
+        transformed.add_transformations(
+            translate([1, 1, 1]), translate([0, 0, 0.33])
+        )
+        return transformed
+
+    @pytest.mark.skip(
+        reason="Stream-based reader cannot determine n_frames until EOF"
+    )
+    def test_n_frames(self, reader, ref):
+        assert_equal(
+            self.universe.trajectory.n_frames,
+            1,
+            "wrong number of frames in pdb",
+        )
+
+    def test_first_frame(self, ref, reader):
+        # don't rewind here as in inherited base test
+        assert_timestep_almost_equal(
+            reader.ts, ref.first_frame, decimal=ref.prec
+        )
+
+    @pytest.mark.skip(reason="IMD is not a writeable format")
+    def test_get_writer_1(self, ref, reader, tmpdir):
+        with tmpdir.as_cwd():
+            outfile = "test-writer." + ref.ext
+            with reader.Writer(outfile) as W:
+                assert_equal(isinstance(W, ref.writer), True)
+                assert_equal(W.n_atoms, reader.n_atoms)
+
+    @pytest.mark.skip(reason="IMD is not a writeable format")
+    def test_get_writer_2(self, ref, reader, tmpdir):
+        with tmpdir.as_cwd():
+            outfile = "test-writer." + ref.ext
+            with reader.Writer(outfile, n_atoms=100) as W:
+                assert_equal(isinstance(W, ref.writer), True)
+                assert_equal(W.n_atoms, 100)
+
+    @pytest.mark.skip(
+        reason="Stream-based reader cannot determine total_time until EOF"
+    )
+    def test_total_time(self, reader, ref):
+        assert_almost_equal(reader.totaltime, ref.totaltime, decimal=ref.prec)
+
+    @pytest.mark.skip(reason="Stream-based reader can only be read iteratively")
+    def test_changing_dimensions(self, ref, reader):
+        if ref.changing_dimensions:
+            reader.rewind()
+            if ref.dimensions is None:
+                assert reader.ts.dimensions is None
+            else:
+                assert_array_almost_equal(
+                    reader.ts.dimensions, ref.dimensions, decimal=ref.prec
+                )
+            reader[1]
+            if ref.dimensions_second_frame is None:
+                assert reader.ts.dimensions is None
+            else:
+                assert_array_almost_equal(
+                    reader.ts.dimensions,
+                    ref.dimensions_second_frame,
+                    decimal=ref.prec,
+                )
+
+    def test_iter(self, ref, reader):
+        for i, ts in enumerate(reader):
+            assert_timestep_almost_equal(ts, ref.iter_ts(i), decimal=ref.prec)
+
+    def test_first_dimensions(self, ref, reader):
+        # don't rewind here as in inherited base test
+        if ref.dimensions is None:
+            assert reader.ts.dimensions is None
+        else:
+            assert_array_almost_equal(
+                reader.ts.dimensions, ref.dimensions, decimal=ref.prec
             )
-            try:
-                yield port
-            finally:
-                # Terminate the process
-                p.terminate()
-                try:
-                    p.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    p.kill()
-                    p.wait()
 
-                # Ensure all file descriptors are closed
-                f.close()
+    def test_volume(self, ref, reader):
+        # don't rewind here as in inherited base test
+        vol = reader.ts.volume
+        # Here we can only be sure about the numbers upto the decimal point due
+        # to floating point impressions.
+        assert_almost_equal(vol, ref.volume, 0)
 
+    @pytest.mark.skip(reason="Cannot create new reader from same stream")
+    def test_reload_auxiliaries_from_description(self, ref, reader):
+        # get auxiliary desscriptions form existing reader
+        descriptions = reader.get_aux_descriptions()
+        # load a new reader, without auxiliaries
+        reader = ref.reader(ref.trajectory)
+        # load auxiliaries into new reader, using description...
+        for aux in descriptions:
+            reader.add_auxiliary(**aux)
+        # should have the same number of auxiliaries
+        assert_equal(
+            reader.aux_list,
+            reader.aux_list,
+            "Number of auxiliaries does not match",
+        )
+        # each auxiliary should be the same
+        for auxname in reader.aux_list:
+            assert_equal(
+                reader._auxs[auxname],
+                reader._auxs[auxname],
+                "AuxReaders do not match",
+            )
 
-# NOTE: This test can't pass until dimensions are implemented in IMD 2.0
-# def test_comp_imd_xtc(run_gmx):
-#    # stdout, stderr = run_gmx.communicate()
-#    run_gmx.readuntil(
-#        "IMD: Will wait until I have a connection and IMD_GO orders."
-#    )
-#    u2 = mda.Universe(IMDGROUP_GRO, OUT_TRR)
-#    u = mda.Universe(IMDGROUP_GRO, "localhost:8888", num_atoms=36688)
-#    i = 0
-#    streampos = np.empty((11, 36688, 3), dtype=np.float32)
-#    for ts in u.trajectory:
-#        u.atoms.wrap(
-#            box=u2.trajectory[i].dimensions,
-#            inplace=True,
-#        )
-#        streampos[i] = ts.positions[:]
-#        i += 1
-#
-#    expected = streampos[0]
-#    actual = u2.trajectory[0].positions
-#    rtol = 1e-4
-#    atol = 0
-#    # Calculate the differences and the mask for elements that are not close
-#    differences = np.abs(actual - expected)
-#    not_close = (
-#        np.isclose(actual, expected, rtol=rtol, atol=atol, equal_nan=True)
-#        == False
-#    )
-#    print(u2.trajectory[0].dimensions)
-#    if np.any(not_close):
-#        actual_diffs = actual[not_close]
-#        expected_diffs = expected[not_close]
-#        diff_values = differences[not_close]
-#        print("Differences found:")
-#        print("Indices with differences:", np.nonzero(not_close))
-#        print("Actual values:", actual_diffs)
-#        print("Expected values:", expected_diffs)
-#        print("Differences:", diff_values)
-#        assert False, f"Arrays differ by more than atol={atol} and rtol={rtol}"
-#    # print(run_gmx.recvlines(5))
-#    # print(stdout)
-#
-#    # print(u)
-#    # print(u.trajectory)
-#    assert 1 == 1
-
-
-def test_traj_len(run_gmx):
-    port = run_gmx
-    recvuntil(
-        "gmx_output.log",
-        "IMD: Will wait until I have a connection and IMD_GO orders.",
-        60,
-    )
-    u2 = mda.Universe(IMDGROUP_GRO, OUT_TRR)
-    u = mda.Universe(
-        IMDGROUP_GRO,
-        f"localhost:{port}",
-    )
-    for ts in u.trajectory:
-        pass
-
-    assert len(u2.trajectory) == len(u.trajectory)
-
-
-def test_pause(run_gmx, caplog):
-    port = run_gmx
-    recvuntil(
-        "gmx_output.log",
-        "IMD: Will wait until I have a connection and IMD_GO orders.",
-        60,
-    )
-    u = mda.Universe(
-        IMDGROUP_GRO,
-        f"localhost:{port}",
-        # 1240 bytes per frame
-        buffer_size=62000,
-    )
-    for ts in u.trajectory:
-        time.sleep(0.05)
-
-    assert len(u.trajectory) == 101
-    assert (
-        "IMDProducer: Pausing simulation because buffer is almost full"
-        in caplog.text
-    )
-    assert "IMDProducer: Unpausing simulation, buffer has space" in caplog.text
-    assert "data likely lost in frame" not in caplog.text
-
-
-def test_no_connection(caplog):
-    u = mda.Universe(
-        IMDGROUP_GRO,
-        "localhost:8888",
-        buffer_size=62000,
-    )
-    for ts in u.trajectory:
-        with pytest.raises(ConnectionRefusedError):
+    @pytest.mark.skip(reason="Stream can only be read in for loop")
+    def test_stop_iter(self, reader):
+        # reset to 0
+        reader.rewind()
+        for ts in reader[:-1]:
             pass
-    # NOTE: assert this in output: No connection received. Pausing simulation.
-    assert "IMDReader: Connection to localhost:8888 refused" in caplog.text
+        assert_equal(reader.frame, 0)
 
+    @pytest.mark.skip(reason="Cannot rewind stream")
+    def test_iter_rewinds(self, reader, accessor):
+        for ts_indices in accessor(reader):
+            pass
+        assert_equal(ts_indices.frame, 0)
 
-"""
-import socket
-import struct
+    @pytest.mark.skip(
+        reason="Timeseries currently requires n_frames to be known"
+    )
+    @pytest.mark.parametrize(
+        "order", ("fac", "fca", "afc", "acf", "caf", "cfa")
+    )
+    def test_timeseries_shape(self, reader, order):
+        timeseries = reader.timeseries(order=order)
+        a_index = order.index("a")
+        # f_index = order.index("f")
+        c_index = order.index("c")
+        assert timeseries.shape[a_index] == reader.n_atoms
+        # assert timeseries.shape[f_index] == len(reader)
+        assert timeseries.shape[c_index] == 3
 
-conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    @pytest.mark.skip(
+        reason="Timeseries currently requires n_frames to be known"
+    )
+    @pytest.mark.parametrize("asel", ("index 1", "index 2", "index 1 to 3"))
+    def test_timeseries_asel_shape(self, reader, asel):
+        atoms = mda.Universe(reader.filename).select_atoms(asel)
+        timeseries = reader.timeseries(atoms, order="fac")
+        assert timeseries.shape[0] == len(reader)
+        assert timeseries.shape[1] == len(atoms)
+        assert timeseries.shape[2] == 3
 
-def connect():
-    conn.connect(("localhost",8888))
-    conn.recv(8)
-    go = struct.pack("!ii", 3, 0)
-    conn.sendall(go)
+    @pytest.mark.skip("Cannot slice stream")
+    @pytest.mark.parametrize("slice", ([0, 2, 1], [0, 10, 2], [0, 10, 3]))
+    def test_timeseries_values(self, reader, slice):
+        ts_positions = []
+        if isinstance(reader, mda.coordinates.memory.MemoryReader):
+            pytest.xfail(
+                "MemoryReader uses deprecated stop inclusive"
+                " indexing, see Issue #3893"
+            )
+        if slice[1] > len(reader):
+            pytest.skip("too few frames in reader")
+        for i in range(slice[0], slice[1], slice[2]):
+            ts = reader[i]
+            ts_positions.append(ts.positions.copy())
+        positions = np.asarray(ts_positions)
+        timeseries = reader.timeseries(
+            start=slice[0], stop=slice[1], step=slice[2], order="fac"
+        )
+        assert_allclose(timeseries, positions)
 
-def pause():
-    pause = struct.pack("!ii", 7, 0)
-    conn.sendall(pause)
+    @pytest.mark.skip(reason="Cannot rewind stream")
+    def test_transformations_2iter(self, ref, transformed):
+        # Are the transformations applied and
+        # are the coordinates "overtransformed"?
+        v1 = np.float32((1, 1, 1))
+        v2 = np.float32((0, 0, 0.33))
+        idealcoords = []
+        for i, ts in enumerate(transformed):
+            idealcoords.append(ref.iter_ts(i).positions + v1 + v2)
+            assert_array_almost_equal(
+                ts.positions, idealcoords[i], decimal=ref.prec
+            )
 
-"""
+        for i, ts in enumerate(transformed):
+            assert_almost_equal(ts.positions, idealcoords[i], decimal=ref.prec)
+
+    @pytest.mark.skip(reason="Cannot slice stream")
+    def test_transformations_slice(self, ref, transformed):
+        # Are the transformations applied when iterating over a slice of the trajectory?
+        v1 = np.float32((1, 1, 1))
+        v2 = np.float32((0, 0, 0.33))
+        for i, ts in enumerate(transformed[2:3:1]):
+            idealcoords = ref.iter_ts(ts.frame).positions + v1 + v2
+            assert_array_almost_equal(
+                ts.positions, idealcoords, decimal=ref.prec
+            )
+
+    @pytest.mark.skip(reason="Cannot slice stream")
+    def test_transformations_switch_frame(self, ref, transformed):
+        # This test checks if the transformations are applied and if the coordinates
+        # "overtransformed" on different situations
+        # Are the transformations applied when we switch to a different frame?
+        v1 = np.float32((1, 1, 1))
+        v2 = np.float32((0, 0, 0.33))
+        first_ideal = ref.iter_ts(0).positions + v1 + v2
+        if len(transformed) > 1:
+            assert_array_almost_equal(
+                transformed[0].positions, first_ideal, decimal=ref.prec
+            )
+            second_ideal = ref.iter_ts(1).positions + v1 + v2
+            assert_array_almost_equal(
+                transformed[1].positions, second_ideal, decimal=ref.prec
+            )
+
+            # What if we comeback to the previous frame?
+            assert_array_almost_equal(
+                transformed[0].positions, first_ideal, decimal=ref.prec
+            )
+
+            # How about we switch the frame to itself?
+            assert_array_almost_equal(
+                transformed[0].positions, first_ideal, decimal=ref.prec
+            )
+        else:
+            assert_array_almost_equal(
+                transformed[0].positions, first_ideal, decimal=ref.prec
+            )
+
+    @pytest.mark.skip(reason="Cannot rewind stream")
+    def test_transformation_rewind(self, ref, transformed):
+        # this test checks if the transformations are applied after rewinding the
+        # trajectory
+        v1 = np.float32((1, 1, 1))
+        v2 = np.float32((0, 0, 0.33))
+        ideal_coords = ref.iter_ts(0).positions + v1 + v2
+        transformed.rewind()
+        assert_array_almost_equal(
+            transformed[0].positions, ideal_coords, decimal=ref.prec
+        )
+
+    @pytest.mark.skip(reason="Cannot make a copy of a stream")
+    def test_copy(self, ref, transformed):
+        # this test checks if transformations are carried over a copy and if the
+        # coordinates of the copy are equal to the original's
+        v1 = np.float32((1, 1, 1))
+        v2 = np.float32((0, 0, 0.33))
+        new = transformed.copy()
+        assert_equal(
+            transformed.transformations,
+            new.transformations,
+            "transformations are not equal",
+        )
+        for i, ts in enumerate(new):
+            ideal_coords = ref.iter_ts(i).positions + v1 + v2
+            assert_array_almost_equal(
+                ts.positions, ideal_coords, decimal=ref.prec
+            )
+
+    @pytest.mark.skip(reason="Cannot pickle socket")
+    def test_pickle_reader(self, reader):
+        """It probably wouldn't be a good idea to pickle a
+        reader that is connected to a server"""
+        reader_p = pickle.loads(pickle.dumps(reader))
+        assert_equal(len(reader), len(reader_p))
+        assert_equal(
+            reader.ts, reader_p.ts, "Timestep is changed after pickling"
+        )
+
+    @pytest.mark.skip(reason="Cannot pickle socket")
+    def test_pickle_next_ts_reader(self, reader):
+        reader_p = pickle.loads(pickle.dumps(reader))
+        assert_equal(
+            next(reader),
+            next(reader_p),
+            "Next timestep is changed after pickling",
+        )
+
+    @pytest.mark.skip(reason="Cannot pickle socket")
+    def test_pickle_last_ts_reader(self, reader):
+        #  move current ts to last frame.
+        reader[-1]
+        reader_p = pickle.loads(pickle.dumps(reader))
+        assert_equal(
+            len(reader),
+            len(reader_p),
+            "Last timestep is changed after pickling",
+        )
+        assert_equal(
+            reader.ts, reader_p.ts, "Last timestep is changed after pickling"
+        )
+
+    @pytest.mark.skip(reason="Cannot copy stream")
+    def test_transformations_copy(self, ref, transformed):
+        # this test checks if transformations are carried over a copy and if the
+        # coordinates of the copy are equal to the original's
+        v1 = np.float32((1, 1, 1))
+        v2 = np.float32((0, 0, 0.33))
+        new = transformed.copy()
+        assert_equal(
+            transformed.transformations,
+            new.transformations,
+            "transformations are not equal",
+        )
+        for i, ts in enumerate(new):
+            ideal_coords = ref.iter_ts(i).positions + v1 + v2
+            assert_array_almost_equal(
+                ts.positions, ideal_coords, decimal=ref.prec
+            )
+
+    @pytest.mark.skip(
+        reason="Timeseries currently requires n_frames to be known"
+    )
+    def test_timeseries_empty_asel(self, reader):
+        with pytest.warns(
+            UserWarning,
+            match="Empty string to select atoms, empty group returned.",
+        ):
+            atoms = mda.Universe(reader.filename).select_atoms(None)
+        with pytest.raises(ValueError, match="Timeseries requires at least"):
+            reader.timeseries(asel=atoms)
+
+    @pytest.mark.skip(
+        reason="Timeseries currently requires n_frames to be known"
+    )
+    def test_timeseries_empty_atomgroup(self, reader):
+        with pytest.warns(
+            UserWarning,
+            match="Empty string to select atoms, empty group returned.",
+        ):
+            atoms = mda.Universe(reader.filename).select_atoms(None)
+        with pytest.raises(ValueError, match="Timeseries requires at least"):
+            reader.timeseries(atomgroup=atoms)
+
+    @pytest.mark.skip(
+        reason="Timeseries currently requires n_frames to be known"
+    )
+    def test_timeseries_asel_warns_deprecation(self, reader):
+        atoms = mda.Universe(reader.filename).select_atoms("index 1")
+        with pytest.warns(DeprecationWarning, match="asel argument to"):
+            timeseries = reader.timeseries(asel=atoms, order="fac")
+
+    @pytest.mark.skip(
+        reason="Timeseries currently requires n_frames to be known"
+    )
+    def test_timeseries_atomgroup(self, reader):
+        atoms = mda.Universe(reader.filename).select_atoms("index 1")
+        timeseries = reader.timeseries(atomgroup=atoms, order="fac")
+
+    @pytest.mark.skip(
+        reason="Timeseries currently requires n_frames to be known"
+    )
+    def test_timeseries_atomgroup_asel_mutex(self, reader):
+        atoms = mda.Universe(reader.filename).select_atoms("index 1")
+        with pytest.raises(ValueError, match="Cannot provide both"):
+            timeseries = reader.timeseries(
+                atomgroup=atoms, asel=atoms, order="fac"
+            )
+
+    @pytest.mark.skip("Cannot slice stream")
+    def test_last_frame(self, ref, reader):
+        ts = reader[-1]
+        assert_timestep_almost_equal(ts, ref.last_frame, decimal=ref.prec)
+
+    @pytest.mark.skip("Cannot slice stream")
+    def test_go_over_last_frame(self, ref, reader):
+        with pytest.raises(IndexError):
+            reader[ref.n_frames + 1]
+
+    @pytest.mark.skip("Cannot slice stream")
+    def test_frame_jump(self, ref, reader):
+        ts = reader[ref.jump_to_frame.frame]
+        assert_timestep_almost_equal(ts, ref.jump_to_frame, decimal=ref.prec)
+
+    @pytest.mark.skip("Cannot slice stream")
+    def test_frame_jump_issue1942(self, ref, reader):
+        """Test for issue 1942 (especially XDR on macOS)"""
+        reader.rewind()
+        try:
+            for ii in range(ref.n_frames + 2):
+                reader[0]
+        except StopIteration:
+            pytest.fail("Frame-seeking wrongly iterated (#1942)")
+
+    def test_next_gives_second_frame(self, ref, reader):
+        # don't recreate reader here as in inherited base test
+        ts = reader.next()
+        assert_timestep_almost_equal(ts, ref.second_frame, decimal=ref.prec)
+
+    @pytest.mark.skip(
+        reason="Stream isn't rewound after iteration- base reference is the same but it is the last frame"
+    )
+    def test_frame_collect_all_same(self, reader):
+        # check that the timestep resets so that the base reference is the same
+        # for all timesteps in a collection with the exception of memoryreader
+        # and DCDReader
+        if isinstance(reader, mda.coordinates.memory.MemoryReader):
+            pytest.xfail("memoryreader allows independent coordinates")
+        if isinstance(reader, mda.coordinates.DCD.DCDReader):
+            pytest.xfail(
+                "DCDReader allows independent coordinates."
+                "This behaviour is deprecated and will be changed"
+                "in 3.0"
+            )
+        collected_ts = []
+        for i, ts in enumerate(reader):
+            collected_ts.append(ts.positions)
+        for array in collected_ts:
+            assert_allclose(array, collected_ts[0])
